@@ -1,4 +1,15 @@
 {
-  ".test": "hi!",
-  ".ping": "Pong! Bot đang online nè."
+  ".scriptforsaken": "``getgenv().SCRIPT_KEY = "KEYLESS"
+getgenv().loadalllanguage = false -- đổi thành true để load đầy đủ ngôn ngữ, false để load ít ngôn ngữ
+getgenv().showpingandfps = true -- đổi thành false để tắt, true để bật
+loadstring(game:HttpGet("https://api.jnkie.com/api/v1/luascripts/public/c3361825eee7f3f4f5ae94236ae31b3d1aff3fafdd9bc0fa255efbbc0e84eb6a/download"))()``",
+  ".scriptgag2": "``getgenv().showpingandfps = true
+loadstring(game:HttpGet("https://raw.githubusercontent.com/SLK-GAMING-MOD/hutaohub/refs/heads/main/GrowaGarden2.luau"))()``",
+  ".sf": "``getgenv().SCRIPT_KEY = "KEYLESS"
+getgenv().loadalllanguage = false -- đổi thành true để load đầy đủ ngôn ngữ, false để load ít ngôn ngữ
+getgenv().showpingandfps = true -- đổi thành false để tắt, true để bật
+loadstring(game:HttpGet("https://api.jnkie.com/api/v1/luascripts/public/c3361825eee7f3f4f5ae94236ae31b3d1aff3fafdd9bc0fa255efbbc0e84eb6a/download"))()``",
+  ".sg": "``getgenv().showpingandfps = true
+loadstring(game:HttpGet("https://raw.githubusercontent.com/SLK-GAMING-MOD/hutaohub/refs/heads/main/GrowaGarden2.luau"))()``",
+  ".ping": "Pong !! tui đang online nè :3"
 }
