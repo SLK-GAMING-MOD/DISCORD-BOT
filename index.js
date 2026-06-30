@@ -1,8 +1,8 @@
-const { Client, GatewayIntentBits, PermissionsBitField, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionsBitField, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 
-// Khởi tạo bot với quyền đọc tin nhắn
+// Khởi tạo bot
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -11,11 +11,11 @@ const client = new Client({
     ]
 });
 
-// Đường dẫn tới file chứa lệnh trên GitHub/Host
+// Đường dẫn tới file chứa lệnh
 const commandsFilePath = path.join(__dirname, 'commands.json');
 let customCommands = {};
 
-// Hàm tải các command từ file
+// Hàm tải các command
 function loadCommands() {
     if (fs.existsSync(commandsFilePath)) {
         const rawData = fs.readFileSync(commandsFilePath, 'utf8');
@@ -23,15 +23,14 @@ function loadCommands() {
     }
 }
 
-// Chạy hàm tải command khi bot khởi động
 loadCommands();
 
 client.once('ready', () => {
     console.log(`✅ Bot ${client.user.tag} đã online!`);
 });
 
+// Sự kiện xử lý khi có tin nhắn
 client.on('messageCreate', message => {
-    // Bỏ qua tin nhắn từ bot khác để tránh loop
     if (message.author.bot) return;
 
     const args = message.content.split(' ');
@@ -39,7 +38,6 @@ client.on('messageCreate', message => {
 
     // 1. Lệnh tạo command mới (Chỉ Admin)
     if (command === '.newcommand') {
-        // Kiểm tra quyền Admin
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             const errorEmbed = new EmbedBuilder()
                 .setColor('#ff3333')
@@ -48,7 +46,6 @@ client.on('messageCreate', message => {
             return message.reply({ embeds: [errorEmbed] });
         }
         
-        // Kiểm tra cú pháp
         if (args.length < 3) {
             const syntaxEmbed = new EmbedBuilder()
                 .setColor('#f1c40f')
@@ -58,9 +55,8 @@ client.on('messageCreate', message => {
         }
 
         const newCmd = args[1].toLowerCase();
-        const response = args.slice(2).join(' '); // Gộp phần còn lại thành câu trả lời
+        const response = args.slice(2).join(' '); 
 
-        // Lưu vào bộ nhớ và ghi vào file
         customCommands[newCmd] = response;
         fs.writeFileSync(commandsFilePath, JSON.stringify(customCommands, null, 2));
 
@@ -99,7 +95,7 @@ client.on('messageCreate', message => {
         }
     }
 
-    // 3. Lệnh Help xem danh sách
+    // 3. Lệnh Help
     if (command === '.help') {
         const cmds = Object.keys(customCommands);
         if (cmds.length === 0) {
@@ -117,22 +113,51 @@ client.on('messageCreate', message => {
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // 2. Chạy lệnh custom (Dành cho tất cả mọi người)
+    // 2. Chạy lệnh custom và hiển thị nút Copy
     const userMessage = message.content.toLowerCase();
     if (customCommands[userMessage]) {
-        // Tạo giao diện Embed chuẩn giống hệt ảnh bạn yêu cầu
         const resultEmbed = new EmbedBuilder()
-            .setColor('#2ecc71') // Thanh màu xanh lá bên cạnh
-            .setTitle('Hutao Cute V4') // Tiêu đề chính giống ảnh
-            .addFields({ name: 'Result', value: customCommands[userMessage] }) // Ô chứa Script/Key để copy
+            .setColor('#2ecc71') 
+            .setTitle('Hutao Cute V4') 
+            .addFields({ name: 'Result', value: customCommands[userMessage] }) 
             .setFooter({ 
                 text: `Requested by ${message.author.username}`, 
                 iconURL: message.author.displayAvatarURL({ dynamic: true }) 
-            }); // Hiện tên và avatar người gọi lệnh ở góc dưới
+            });
+
+        // Tạo nút Copy (Màu xanh lá - Success)
+        const copyButton = new ButtonBuilder()
+            .setCustomId(`copy_btn_${userMessage}`) // Gắn ID chứa tên lệnh để bot biết copy cái gì
+            .setLabel('Copy')
+            .setStyle(ButtonStyle.Success);
+
+        // Gắn nút vào 1 hàng (ActionRow)
+        const row = new ActionRowBuilder().addComponents(copyButton);
         
-        return message.reply({ embeds: [resultEmbed] });
+        // Gửi Embed kèm Nút bấm
+        return message.reply({ embeds: [resultEmbed], components: [row] });
     }
 });
 
-// Bot sử dụng token từ Environment Variables của web host
+// Sự kiện xử lý khi có người bấm vào nút (Interaction)
+client.on('interactionCreate', async interaction => {
+    // Nếu không phải là click vào nút thì bỏ qua
+    if (!interaction.isButton()) return;
+
+    // Kiểm tra xem có đúng là nút Copy của hệ thống mình không
+    if (interaction.customId.startsWith('copy_btn_')) {
+        // Lấy tên lệnh từ ID của nút
+        const cmdName = interaction.customId.replace('copy_btn_', '');
+        const textToCopy = customCommands[cmdName];
+
+        if (textToCopy) {
+            // Trả lời lại cho người bấm bằng nội dung lệnh dạng ẨN (ephemeral)
+            await interaction.reply({ content: textToCopy, ephemeral: true });
+        } else {
+            // Phòng hờ trường hợp lệnh đã bị xóa nhưng người ta vẫn bấm nút cũ
+            await interaction.reply({ content: '⚠️ Lệnh này không tồn tại hoặc đã bị xóa.', ephemeral: true });
+        }
+    }
+});
+
 client.login(process.env.TOKEN);
