@@ -118,7 +118,7 @@ client.on('messageCreate', message => {
     if (customCommands[userMessage]) {
         const resultEmbed = new EmbedBuilder()
             .setColor('#2ecc71') 
-            .setTitle('Hutao Cute V4') 
+            .setTitle('__**Hutao Cute V4**__') 
             .addFields({ name: 'Result', value: customCommands[userMessage] }) 
             .setFooter({ 
                 text: `Requested by ${message.author.username}`, 
