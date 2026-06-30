@@ -123,7 +123,7 @@ client.on('messageCreate', message => {
         // Tạo giao diện Embed chuẩn giống hệt ảnh bạn yêu cầu
         const resultEmbed = new EmbedBuilder()
             .setColor('#2ecc71') // Thanh màu xanh lá bên cạnh
-            .setTitle('Hutao Hub') // Tiêu đề chính giống ảnh
+            .setTitle('Hutao Cute V4') // Tiêu đề chính giống ảnh
             .addFields({ name: 'Result', value: customCommands[userMessage] }) // Ô chứa Script/Key để copy
             .setFooter({ 
                 text: `Requested by ${message.author.username}`, 
