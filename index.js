@@ -11,252 +11,263 @@ const client = new Client({
     ]
 });
 
-// --- PHẦN LƯU TRỮ DỮ LIỆU ---
-// Kiểm tra xem có ổ cứng Volume '/data' trên Railway không.
+// --- HỆ THỐNG LƯU TRỮ DỮ LIỆU (CHỐNG MẤT TRÍ NHỚ) ---
+// Thư mục '/data' là nơi Railway Mount Volume. Nếu chạy trên máy tính cá nhân nó sẽ dùng thư mục hiện tại.
 const dataFolder = fs.existsSync('/data') ? '/data' : __dirname;
 const commandsFilePath = path.join(dataFolder, 'commands.json');
-const moneyFilePath = path.join(dataFolder, 'money.json'); // File lưu tiền tệ mới
-let customCommands = {};
-let userMoney = {};
+const economyFilePath = path.join(dataFolder, 'economy.json'); // File lưu tiền
 
-// Hàm tải toàn bộ dữ liệu
+let customCommands = {};
+let userMoney = {}; // Biến chứa dữ liệu tiền
+
+// Hàm tải dữ liệu
 function loadData() {
-    // 1. Tải lệnh custom
+    // 1. Tải Lệnh Custom
     if (!fs.existsSync(commandsFilePath)) {
         const originalPath = path.join(__dirname, 'commands.json');
-        if (fs.existsSync(originalPath)) {
-            fs.copyFileSync(originalPath, commandsFilePath);
-        } else {
-            fs.writeFileSync(commandsFilePath, JSON.stringify({}, null, 2));
-        }
+        if (fs.existsSync(originalPath)) fs.copyFileSync(originalPath, commandsFilePath);
+        else fs.writeFileSync(commandsFilePath, JSON.stringify({}, null, 2));
     }
     customCommands = JSON.parse(fs.readFileSync(commandsFilePath, 'utf8'));
 
-    // 2. Tải dữ liệu tiền tệ
-    if (!fs.existsSync(moneyFilePath)) {
-        fs.writeFileSync(moneyFilePath, JSON.stringify({}, null, 2));
+    // 2. Tải Dữ liệu Tiền
+    if (!fs.existsSync(economyFilePath)) {
+        fs.writeFileSync(economyFilePath, JSON.stringify({}, null, 2));
     }
-    userMoney = JSON.parse(fs.readFileSync(moneyFilePath, 'utf8'));
+    userMoney = JSON.parse(fs.readFileSync(economyFilePath, 'utf8'));
 }
 
-// Hàm lưu tiền
+// Hàm lưu tiền vào file
 function saveMoney() {
-    fs.writeFileSync(moneyFilePath, JSON.stringify(userMoney, null, 2));
+    fs.writeFileSync(economyFilePath, JSON.stringify(userMoney, null, 2));
 }
 
-// Chạy hàm tải dữ liệu khi khởi động
+// Hàm định dạng tiền tệ VND
+function formatVND(amount) {
+    return amount.toLocaleString('vi-VN') + ' VNĐ';
+}
+
+// Khởi chạy tải dữ liệu
 loadData();
+// -----------------------------------------------------------
 
 client.once('ready', () => {
-    console.log(`✅ Bot ${client.user.tag} đã online!`);
+    console.log(`✅ Bot ${client.user.tag} đã online! Đang dùng thư mục dữ liệu tại: ${dataFolder}`);
 });
 
-// Set dùng để chống spam lệnh earnmoney
-const activeEarners = new Set();
-
-// Sự kiện xử lý khi có tin nhắn (Lưu ý: đã thêm 'async' để dùng await cho lệnh delay 3s)
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
     const args = message.content.split(' ');
     const command = args[0].toLowerCase();
+    const userId = message.author.id;
 
-    // ==========================================
-    // HỆ THỐNG KINH TẾ (MONEY SYSTEM)
-    // ==========================================
-
-    // Lệnh xem số dư (.money hoặc .money @ai-đó)
-    if (command === '.money') {
-        const targetUser = message.mentions.users.first() || message.author;
-        const balance = userMoney[targetUser.id] || 0;
-
-        const embed = new EmbedBuilder()
-            .setColor('#f1c40f')
-            .setTitle(`💰 Số Dư Của ${targetUser.username}`)
-            .setDescription(`**${balance.toLocaleString('vi-VN')} VND**`);
-        return message.reply({ embeds: [embed] });
+    // Khởi tạo tài khoản nếu chưa có tiền
+    if (userMoney[userId] === undefined) {
+        userMoney[userId] = 0;
+        saveMoney();
     }
 
-    // Lệnh kiếm tiền (.earnmoney [tỷ lệ mất tiền])
+    // ==========================================
+    // CÁC LỆNH VỀ KINH TẾ (ECONOMY)
+    // ==========================================
+
+    // 1. Xem tiền (.money hoặc .money @user)
+    if (command === '.money') {
+        const targetUser = message.mentions.users.first() || message.author;
+        const targetId = targetUser.id;
+        const balance = userMoney[targetId] || 0;
+
+        const moneyEmbed = new EmbedBuilder()
+            .setColor('#f1c40f')
+            .setTitle('💰 Số Dư Tài Khoản')
+            .setDescription(`Tài khoản của **${targetUser.username}** hiện có:\n\n💵 **${formatVND(balance)}**`)
+            .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }));
+        return message.reply({ embeds: [moneyEmbed] });
+    }
+
+    // 2. Kiếm tiền (.earnmoney [tỉ lệ mất %])
     if (command === '.earnmoney') {
-        if (activeEarners.has(message.author.id)) {
-            return message.reply('⏳ Bình tĩnh bro! Đang làm job cũ chưa xong mà.');
+        let risk = 0; // Mặc định 0%
+        if (args[1]) {
+            risk = parseInt(args[1].replace('%', ''));
+            if (isNaN(risk) || risk < 0) risk = 0;
+            if (risk > 99) risk = 99; // Giới hạn max 99%
         }
 
-        let riskStr = args[1] ? args[1].replace('%', '') : '0';
-        let risk = parseInt(riskStr);
+        // Gửi tin nhắn chờ
+        const pendingMsg = await message.reply('⏳ Bot đang đi kiếm tiền cho bạn, chờ 3 giây nhé...');
 
-        if (isNaN(risk) || risk < 0 || risk > 99) {
-            return message.reply('⚠️ Sai cú pháp! Tỷ lệ rủi ro phải là số từ 0 đến 99 (Ví dụ: `.earnmoney 66%` hoặc chỉ gõ `.earnmoney`).');
-        }
-
-        activeEarners.add(message.author.id);
-
-        const workingEmbed = new EmbedBuilder()
-            .setColor('#3498db')
-            .setDescription('⏳ Đang bắt đầu kiếm tiền... Xin chờ 3 giây!');
-        
-        const replyMsg = await message.reply({ embeds: [workingEmbed] });
-
-        // Delay 3 giây
+        // Đợi 3 giây
         setTimeout(() => {
-            activeEarners.delete(message.author.id);
-            const roll = Math.random() * 100; // Quay random từ 0 đến 100
-            
-            if (roll < risk) {
-                // Rớt vô ô mất tiền (Thất bại)
-                const penalty = Math.floor(Math.random() * 20000) + 1000; // Bị trừ random 1k - 21k
-                userMoney[message.author.id] = (userMoney[message.author.id] || 0) - penalty;
-                if (userMoney[message.author.id] < 0) userMoney[message.author.id] = 0; // Không cho âm tiền
+            // Tính toán thắng thua
+            const isWin = (Math.random() * 100) >= risk;
+            let resultEmbed = new EmbedBuilder();
+
+            if (isWin) {
+                // Thắng: Rủi ro càng cao, tiền thưởng gốc càng lớn
+                // 0% -> 1k đến 5k. 99% -> Có thể lên hàng trăm triệu.
+                const minWin = 1000 + (risk * 20000);
+                const maxWin = 5000 + (risk * 50000);
+                const earned = Math.floor(Math.random() * (maxWin - minWin + 1)) + minWin;
+
+                userMoney[userId] += earned;
                 saveMoney();
 
-                const failEmbed = new EmbedBuilder()
-                    .setColor('#ff3333')
-                    .setTitle('💥 Gãy!')
-                    .setDescription(`Bạn đánh cược với tỷ lệ rủi ro **${risk}%** và đã thất bại.\nBạn bị trừ **${penalty.toLocaleString('vi-VN')} VND** phí trị thương!`)
-                    .setFooter({ text: `Số dư hiện tại: ${userMoney[message.author.id].toLocaleString('vi-VN')} VND` });
-                replyMsg.edit({ embeds: [failEmbed] });
+                resultEmbed.setColor('#2ecc71')
+                    .setTitle('🎉 Chúc Mừng!')
+                    .setDescription(`Bạn đã mạo hiểm với tỉ lệ rủi ro **${risk}%** và trúng quả đậm!\n\n💸 Nhận được: **+${formatVND(earned)}**\n💰 Số dư hiện tại: **${formatVND(userMoney[userId])}**`);
             } else {
-                // Trúng quả (Thành công)
-                let minWin, maxWin;
-                if (risk === 0) {
-                    minWin = 1000;
-                    maxWin = 5000;
-                } else {
-                    // Thuật toán: Rủi ro càng cao (gần 99), phần thưởng càng chạm nóc 1 Tỷ
-                    const scale = Math.pow(risk / 99, 3); 
-                    minWin = 1000 + scale * 99999000; // Đạt ~100 triệu VND max
-                    maxWin = 5000 + scale * 999995000; // Đạt ~1 Tỷ VND max
-                }
+                // Thua: Mất tiền tỉ lệ thuận với rủi ro
+                const minLose = 1000 + (risk * 5000);
+                const maxLose = 5000 + (risk * 15000);
+                let lost = Math.floor(Math.random() * (maxLose - minLose + 1)) + minLose;
 
-                const reward = Math.floor(Math.random() * (maxWin - minWin + 1)) + minWin;
-                userMoney[message.author.id] = (userMoney[message.author.id] || 0) + reward;
+                // Không trừ âm tiền
+                if (userMoney[userId] < lost) lost = userMoney[userId];
+                userMoney[userId] -= lost;
                 saveMoney();
 
-                const successEmbed = new EmbedBuilder()
-                    .setColor('#2ecc71')
-                    .setTitle('🎉 Trúng Mánh!')
-                    .setDescription(`Khét đấy! Bạn vượt qua rủi ro **${risk}%** và húp trọn **${reward.toLocaleString('vi-VN')} VND**!`)
-                    .setFooter({ text: `Số dư hiện tại: ${userMoney[message.author.id].toLocaleString('vi-VN')} VND` });
-                replyMsg.edit({ embeds: [successEmbed] });
+                resultEmbed.setColor('#e74c3c')
+                    .setTitle('😭 Toang Rồi!')
+                    .setDescription(`Mạo hiểm **${risk}%** nhưng nhân phẩm kém, bạn đã bị lừa sạch!\n\n💸 Bị trừ: **-${formatVND(lost)}**\n💰 Số dư hiện tại: **${formatVND(userMoney[userId])}**`);
             }
+
+            pendingMsg.edit({ content: '', embeds: [resultEmbed] });
         }, 3000);
         return;
     }
 
+    // 3. Admin Bơm Tiền (.addmoney @user 1,000,000)
+    if (command === '.addmoney') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return message.reply('❌ Chỉ Admin mới có quyền "in tiền" nha!');
+        }
+
+        const targetUser = message.mentions.users.first();
+        const amountStr = args[2];
+
+        if (!targetUser || !amountStr) {
+            return message.reply('⚠️ Sai cú pháp! Ví dụ: `.addmoney @user 1000000` hoặc `.addmoney @user 1,000,000`');
+        }
+
+        // Loại bỏ dấu phẩy/chấm để lấy số chuẩn
+        const amount = parseInt(amountStr.replace(/[,.]/g, ''));
+        if (isNaN(amount) || amount <= 0) return message.reply('⚠️ Số tiền không hợp lệ!');
+
+        const targetId = targetUser.id;
+        if (userMoney[targetId] === undefined) userMoney[targetId] = 0;
+        
+        userMoney[targetId] += amount;
+        saveMoney();
+
+        return message.reply(`✅ Đã bơm **${formatVND(amount)}** vào tài khoản của **${targetUser.username}**.`);
+    }
+
+    // 4. Chuyển Khoản (.givemoney @user 1,000)
+    if (command === '.givemoney') {
+        const targetUser = message.mentions.users.first();
+        const amountStr = args[2];
+
+        if (!targetUser || !amountStr) {
+            return message.reply('⚠️ Sai cú pháp! Ví dụ: `.givemoney @user 50000`');
+        }
+
+        if (targetUser.id === message.author.id) {
+            return message.reply('⚠️ Không thể tự chuyển tiền cho chính mình!');
+        }
+
+        const amount = parseInt(amountStr.replace(/[,.]/g, ''));
+        if (isNaN(amount) || amount <= 0) return message.reply('⚠️ Số tiền chuyển không hợp lệ!');
+
+        if (userMoney[userId] < amount) {
+            return message.reply(`❌ Bạn không đủ tiền! Số dư của bạn chỉ có: **${formatVND(userMoney[userId])}**`);
+        }
+
+        const targetId = targetUser.id;
+        if (userMoney[targetId] === undefined) userMoney[targetId] = 0;
+
+        // Trừ người gửi, cộng người nhận
+        userMoney[userId] -= amount;
+        userMoney[targetId] += amount;
+        saveMoney();
+
+        const transferEmbed = new EmbedBuilder()
+            .setColor('#3498db')
+            .setTitle('💸 Chuyển Khoản Thành Công')
+            .setDescription(`**${message.author.username}** đã chuyển cho **${targetUser.username}** số tiền:\n\n💵 **${formatVND(amount)}**`);
+        return message.reply({ embeds: [transferEmbed] });
+    }
+
+
     // ==========================================
-    // HỆ THỐNG LỆNH CUSTOM (Giữ nguyên)
+    // HỆ THỐNG CUSTOM COMMANDS (GIỮ NGUYÊN)
     // ==========================================
 
-    // 1. Lệnh tạo command mới (Chỉ Admin)
     if (command === '.newcommand') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            const errorEmbed = new EmbedBuilder()
-                .setColor('#ff3333')
-                .setTitle('❌ Thất Bại')
-                .setDescription('Chỉ Admin mới được dùng lệnh này nha bro!');
+            const errorEmbed = new EmbedBuilder().setColor('#ff3333').setTitle('❌ Thất Bại').setDescription('Chỉ Admin mới được dùng lệnh này nha bro!');
             return message.reply({ embeds: [errorEmbed] });
         }
-        
         if (args.length < 3) {
-            const syntaxEmbed = new EmbedBuilder()
-                .setColor('#f1c40f')
-                .setTitle('⚠️ Sai cú pháp')
-                .setDescription('Ví dụ chuẩn: `.newcommand .hello Chào cậu`');
+            const syntaxEmbed = new EmbedBuilder().setColor('#f1c40f').setTitle('⚠️ Sai cú pháp').setDescription('Ví dụ chuẩn: `.newcommand .hello Chào cậu`');
             return message.reply({ embeds: [syntaxEmbed] });
         }
-
         const newCmd = args[1].toLowerCase();
         const response = args.slice(2).join(' '); 
-
         customCommands[newCmd] = response;
         fs.writeFileSync(commandsFilePath, JSON.stringify(customCommands, null, 2));
-
-        const successEmbed = new EmbedBuilder()
-            .setColor('#2ecc71')
-            .setTitle('✅ Hệ Thống Lệnh')
-            .setDescription(`Đã tạo lệnh **${newCmd}** thành công!`);
+        const successEmbed = new EmbedBuilder().setColor('#2ecc71').setTitle('✅ Hệ Thống Lệnh').setDescription(`Đã tạo lệnh **${newCmd}** thành công!`);
         return message.reply({ embeds: [successEmbed] });
     }
 
-    // 4. Lệnh xóa command (Chỉ Admin)
     if (command === '.removecommand') {
-        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-            const errorEmbed = new EmbedBuilder()
-                .setColor('#ff3333')
-                .setTitle('❌ Thất Bại')
-                .setDescription('Chỉ Admin mới được dùng lệnh này!');
-            return message.reply({ embeds: [errorEmbed] });
-        }
-
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) return message.reply('❌ Chỉ Admin mới được dùng lệnh này!');
         const targetCmd = args[1]?.toLowerCase();
         if (customCommands[targetCmd]) {
             delete customCommands[targetCmd];
             fs.writeFileSync(commandsFilePath, JSON.stringify(customCommands, null, 2));
-
-            const removeEmbed = new EmbedBuilder()
-                .setColor('#2ecc71')
-                .setTitle('✅ Hệ Thống Lệnh')
-                .setDescription(`Đã xóa lệnh **${targetCmd}** thành công!`);
-            return message.reply({ embeds: [removeEmbed] });
+            return message.reply(`✅ Đã xóa lệnh **${targetCmd}** thành công!`);
         } else {
-            const notFoundEmbed = new EmbedBuilder()
-                .setColor('#f1c40f')
-                .setDescription('⚠️ Không tìm thấy lệnh này trong hệ thống.');
-            return message.reply({ embeds: [notFoundEmbed] });
+            return message.reply('⚠️ Không tìm thấy lệnh này trong hệ thống.');
         }
     }
 
-    // 3. Lệnh Help
     if (command === '.help') {
         const cmds = Object.keys(customCommands);
-        if (cmds.length === 0) {
-            const noCmdEmbed = new EmbedBuilder()
-                .setColor('#f1c40f')
-                .setDescription('Hiện tại chưa có lệnh custom nào.');
-            return message.reply({ embeds: [noCmdEmbed] });
-        }
-
+        let desc = cmds.length === 0 ? 'Hiện tại chưa có lệnh custom nào.' : cmds.map(c => `• \`${c}\``).join('\n');
+        
         const helpEmbed = new EmbedBuilder()
             .setColor('#00bfff')
-            .setTitle('📜 Danh Sách Lệnh Hiện Có')
-            .setDescription(cmds.map(c => `• \`${c}\``).join('\n'))
-            .setFooter({ text: `Tổng số: ${cmds.length} lệnh đang hoạt động` });
+            .setTitle('📜 Danh Sách Lệnh')
+            .setDescription(`**Lệnh Tiền Tệ:**\n• \`.money [@user]\` - Xem tiền\n• \`.earnmoney [0-99%]\` - Kiếm tiền\n• \`.givemoney [@user] [số tiền]\` - Chuyển khoản\n• \`.addmoney [@user] [số tiền]\` - (Admin) Bơm tiền\n\n**Lệnh Custom:**\n${desc}`);
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // 2. Chạy lệnh custom và hiển thị nút Copy
     const userMessage = message.content.toLowerCase();
     if (customCommands[userMessage]) {
         const resultEmbed = new EmbedBuilder()
             .setColor('#2ecc71') 
             .setTitle('__**Hutao Cute V4**__') 
             .addFields({ name: 'Result', value: customCommands[userMessage] }) 
-            .setFooter({ 
-                text: `Requested by ${message.author.username}`, 
-                iconURL: message.author.displayAvatarURL({ dynamic: true }) 
-            });
+            .setFooter({ text: `Requested by ${message.author.username}`, iconURL: message.author.displayAvatarURL({ dynamic: true }) });
 
-        // Tạo nút Copy (Màu xanh lá - Success)
         const copyButton = new ButtonBuilder()
-            .setCustomId(`copy_btn_${userMessage}`) 
+            .setCustomId(`copy_btn_${userMessage}`)
             .setLabel('Copy')
             .setStyle(ButtonStyle.Success);
 
         const row = new ActionRowBuilder().addComponents(copyButton);
-        
         return message.reply({ embeds: [resultEmbed], components: [row] });
     }
 });
 
-// Sự kiện xử lý khi có người bấm vào nút (Interaction)
+// Xử lý nút Copy
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
-
     if (interaction.customId.startsWith('copy_btn_')) {
         const cmdName = interaction.customId.replace('copy_btn_', '');
         const textToCopy = customCommands[cmdName];
-
         if (textToCopy) {
             await interaction.reply({ content: textToCopy, ephemeral: true });
         } else {
