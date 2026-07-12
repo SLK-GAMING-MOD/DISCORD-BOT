@@ -109,10 +109,15 @@ client.on('messageCreate', async message => {
         const targetData = await getUserMoney(targetUser.id);
         const balance = targetData.money;
 
+        let desc = `Tài khoản của **${targetUser.username}** hiện có:\n\n💵 **${formatVND(balance)}**`;
+        if (balance < 0) {
+            desc += `\n⚠️ *Cảnh báo: Đang nợ ngập đầu, mau đi cày tiền trả nợ đi!*`;
+        }
+
         const moneyEmbed = new EmbedBuilder()
-            .setColor('#f1c40f')
+            .setColor(balance >= 0 ? '#f1c40f' : '#e74c3c')
             .setTitle('💰 Số Dư Tài Khoản')
-            .setDescription(`Tài khoản của **${targetUser.username}** hiện có:\n\n💵 **${formatVND(balance)}**`)
+            .setDescription(desc)
             .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }));
         return message.reply({ embeds: [moneyEmbed] });
     }
@@ -133,8 +138,9 @@ client.on('messageCreate', async message => {
             const userData = await getUserMoney(userId); 
 
             if (isWin) {
-                const minWin = 1000 + (risk * 20000);
-                const maxWin = 5000 + (risk * 50000);
+                // Thắng: Đã giảm số tiền nhận được cho cân bằng
+                const minWin = 100 + (risk * 1000); 
+                const maxWin = 1000 + (risk * 3000); 
                 const earned = Math.floor(Math.random() * (maxWin - minWin + 1)) + minWin;
 
                 userData.money += earned;
@@ -142,19 +148,19 @@ client.on('messageCreate', async message => {
 
                 resultEmbed.setColor('#2ecc71')
                     .setTitle('🎉 Chúc Mừng!')
-                    .setDescription(`Bạn đã mạo hiểm với tỉ lệ rủi ro **${risk}%** và trúng quả đậm!\n\n💸 Nhận được: **+${formatVND(earned)}**\n💰 Số dư hiện tại: **${formatVND(userData.money)}**`);
+                    .setDescription(`Bạn đã mạo hiểm với tỉ lệ rủi ro **${risk}%** và trúng mánh!\n\n💸 Nhận được: **+${formatVND(earned)}**\n💰 Số dư hiện tại: **${formatVND(userData.money)}**`);
             } else {
-                const minLose = 1000 + (risk * 5000);
-                const maxLose = 5000 + (risk * 15000);
+                // Thua: Đã bỏ chặn âm tiền, tài khoản sẽ bị nợ
+                const minLose = 500 + (risk * 500);
+                const maxLose = 1000 + (risk * 2000);
                 let lost = Math.floor(Math.random() * (maxLose - minLose + 1)) + minLose;
 
-                if (userData.money < lost) lost = userData.money;
-                userData.money -= lost;
+                userData.money -= lost; // Trừ thẳng tay, có thể âm (nợ)
                 await userData.save(); 
 
                 resultEmbed.setColor('#e74c3c')
                     .setTitle('😭 Toang Rồi!')
-                    .setDescription(`Mạo hiểm **${risk}%** nhưng nhân phẩm kém, bạn đã bị lừa sạch!\n\n💸 Bị trừ: **-${formatVND(lost)}**\n💰 Số dư hiện tại: **${formatVND(userData.money)}**`);
+                    .setDescription(`Mạo hiểm **${risk}%** nhưng nhân phẩm kém, bạn đã bị lột sạch!\n\n💸 Bị trừ: **-${formatVND(lost)}**\n💰 Số dư hiện tại: **${formatVND(userData.money)}**`);
             }
 
             pendingMsg.edit({ content: '', embeds: [resultEmbed] });
@@ -182,6 +188,29 @@ client.on('messageCreate', async message => {
         await targetData.save();
 
         return message.reply(`✅ Đã bơm **${formatVND(amount)}** vào tài khoản của **${targetUser.username}**.`);
+    }
+
+    // 5. Admin Thu Hồi Tiền (.removemoney @user 1,000,000)
+    if (command === '.removemoney') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return message.reply('❌ Chỉ Admin mới có quyền thu hồi tiền nha bro!');
+        }
+
+        const targetUser = message.mentions.users.first();
+        const amountStr = args[2];
+
+        if (!targetUser || !amountStr) {
+            return message.reply('⚠️ Sai cú pháp! Ví dụ: `.removemoney @user 50000`');
+        }
+
+        const amount = parseInt(amountStr.replace(/[,.]/g, ''));
+        if (isNaN(amount) || amount <= 0) return message.reply('⚠️ Số tiền không hợp lệ!');
+
+        const targetData = await getUserMoney(targetUser.id);
+        targetData.money -= amount; // Trừ tiền, có thể về âm
+        await targetData.save();
+
+        return message.reply(`✅ Đã thu hồi **${formatVND(amount)}** từ tài khoản của **${targetUser.username}**.`);
     }
 
     if (command === '.givemoney') {
@@ -268,7 +297,7 @@ client.on('messageCreate', async message => {
         const helpEmbed = new EmbedBuilder()
             .setColor('#00bfff')
             .setTitle('📜 Danh Sách Lệnh')
-            .setDescription(`**Lệnh Tiền Tệ:**\n• \`.money [@user]\` - Xem tiền\n• \`.earnmoney [0-99%]\` - Kiếm tiền\n• \`.givemoney [@user] [số tiền]\` - Chuyển khoản\n• \`.addmoney [@user] [số tiền]\` - (Admin) Bơm tiền\n\n**Lệnh Custom:**\n${desc}`);
+            .setDescription(`**Lệnh Tiền Tệ:**\n• \`.money [@user]\` - Xem tiền\n• \`.earnmoney [0-99%]\` - Kiếm tiền\n• \`.givemoney [@user] [số tiền]\` - Chuyển khoản\n• \`.addmoney [@user] [số tiền]\` - (Admin) Bơm tiền\n• \`.removemoney [@user] [số tiền]\` - (Admin) Trừ tiền\n\n**Lệnh Custom:**\n${desc}`);
         return message.reply({ embeds: [helpEmbed] });
     }
 
