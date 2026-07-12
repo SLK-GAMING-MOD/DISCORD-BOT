@@ -1,5 +1,7 @@
 const { Client, GatewayIntentBits, PermissionsBitField, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const mongoose = require('mongoose'); // Thêm thư viện database
+const fs = require('fs'); // Thêm lại thư viện đọc file để đồng bộ
+const path = require('path');
 
 // Khởi tạo bot
 const client = new Client({
@@ -15,7 +17,6 @@ const client = new Client({
 // ==========================================
 
 // 🛑 THAY MẬT KHẨU CỦA BRO VÀO CHỖ <db_password> 🛑
-// Nếu bro dùng Railway Variables thì biến process.env.MONGO_URI sẽ được ưu tiên.
 const mongoURI = process.env.MONGO_URI || "mongodb+srv://discordbot:<db_password>@cluster0.qmixkxr.mongodb.net/?appName=Cluster0";
 
 mongoose.connect(mongoURI)
@@ -36,11 +37,33 @@ const commandSchema = new mongoose.Schema({
 });
 const CustomCmd = mongoose.model('CustomCmd', commandSchema);
 
-// Biến lưu trữ tạm (Cache) để bot chạy nhanh hơn, không phải gọi DB mỗi tin nhắn
+// Biến lưu trữ tạm (Cache)
 let customCommands = {};
 
-// Hàm tải toàn bộ Lệnh Custom từ Database khi bot vừa bật
+// Hàm tải toàn bộ Lệnh Custom và ĐỒNG BỘ TỪ FILE CŨ
 async function loadCommands() {
+    // 1. Đồng bộ dữ liệu từ file commands.json cũ lên MongoDB (Chống mất lệnh gốc)
+    try {
+        const commandsFilePath = path.join(__dirname, 'commands.json');
+        if (fs.existsSync(commandsFilePath)) {
+            const rawData = fs.readFileSync(commandsFilePath, 'utf8');
+            const oldCommands = JSON.parse(rawData);
+
+            for (const [cmdName, response] of Object.entries(oldCommands)) {
+                // Kiểm tra xem lệnh này đã có trên MongoDB chưa
+                const exists = await CustomCmd.findOne({ cmdName: cmdName });
+                if (!exists) {
+                    // Nếu chưa có, đẩy lên Database
+                    await CustomCmd.create({ cmdName: cmdName, response: response });
+                    console.log(`⬆️ Đã đồng bộ lệnh gốc lên mây: ${cmdName}`);
+                }
+            }
+        }
+    } catch (err) {
+        console.error("⚠️ Lỗi khi đồng bộ file commands.json:", err);
+    }
+
+    // 2. Tải toàn bộ lệnh từ DB vào Cache để bot sử dụng
     const cmds = await CustomCmd.find({});
     cmds.forEach(cmd => {
         customCommands[cmd.cmdName] = cmd.response;
@@ -67,7 +90,7 @@ function formatVND(amount) {
 
 client.once('ready', async () => {
     console.log(`✅ Bot ${client.user.tag} đã online!`);
-    await loadCommands(); // Tải lệnh lúc khởi động
+    await loadCommands(); // Khởi chạy đồng bộ và tải lệnh
 });
 
 client.on('messageCreate', async message => {
@@ -81,7 +104,6 @@ client.on('messageCreate', async message => {
     // CÁC LỆNH VỀ KINH TẾ (ECONOMY)
     // ==========================================
 
-    // 1. Xem tiền (.money hoặc .money @user)
     if (command === '.money') {
         const targetUser = message.mentions.users.first() || message.author;
         const targetData = await getUserMoney(targetUser.id);
@@ -95,46 +117,40 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [moneyEmbed] });
     }
 
-    // 2. Kiếm tiền (.earnmoney [tỉ lệ mất %])
     if (command === '.earnmoney') {
-        let risk = 0; // Mặc định 0%
+        let risk = 0; 
         if (args[1]) {
             risk = parseInt(args[1].replace('%', ''));
             if (isNaN(risk) || risk < 0) risk = 0;
-            if (risk > 99) risk = 99; // Giới hạn max 99%
+            if (risk > 99) risk = 99; 
         }
 
-        // Gửi tin nhắn chờ
         const pendingMsg = await message.reply('⏳ Bot đang đi kiếm tiền cho bạn, chờ 3 giây nhé...');
 
-        // Đợi 3 giây
         setTimeout(async () => {
             const isWin = (Math.random() * 100) >= risk;
             let resultEmbed = new EmbedBuilder();
-            const userData = await getUserMoney(userId); // Lấy data từ DB
+            const userData = await getUserMoney(userId); 
 
             if (isWin) {
-                // Thắng
                 const minWin = 1000 + (risk * 20000);
                 const maxWin = 5000 + (risk * 50000);
                 const earned = Math.floor(Math.random() * (maxWin - minWin + 1)) + minWin;
 
                 userData.money += earned;
-                await userData.save(); // Lưu vào DB
+                await userData.save(); 
 
                 resultEmbed.setColor('#2ecc71')
                     .setTitle('🎉 Chúc Mừng!')
                     .setDescription(`Bạn đã mạo hiểm với tỉ lệ rủi ro **${risk}%** và trúng quả đậm!\n\n💸 Nhận được: **+${formatVND(earned)}**\n💰 Số dư hiện tại: **${formatVND(userData.money)}**`);
             } else {
-                // Thua
                 const minLose = 1000 + (risk * 5000);
                 const maxLose = 5000 + (risk * 15000);
                 let lost = Math.floor(Math.random() * (maxLose - minLose + 1)) + minLose;
 
-                // Không trừ âm tiền
                 if (userData.money < lost) lost = userData.money;
                 userData.money -= lost;
-                await userData.save(); // Lưu vào DB
+                await userData.save(); 
 
                 resultEmbed.setColor('#e74c3c')
                     .setTitle('😭 Toang Rồi!')
@@ -146,7 +162,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // 3. Admin Bơm Tiền (.addmoney @user 1,000,000)
     if (command === '.addmoney') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply('❌ Chỉ Admin mới có quyền "in tiền" nha!');
@@ -169,7 +184,6 @@ client.on('messageCreate', async message => {
         return message.reply(`✅ Đã bơm **${formatVND(amount)}** vào tài khoản của **${targetUser.username}**.`);
     }
 
-    // 4. Chuyển Khoản (.givemoney @user 1,000)
     if (command === '.givemoney') {
         const targetUser = message.mentions.users.first();
         const amountStr = args[2];
@@ -192,7 +206,6 @@ client.on('messageCreate', async message => {
 
         const targetData = await getUserMoney(targetUser.id);
 
-        // Trừ tiền người gửi, cộng tiền người nhận
         senderData.money -= amount;
         targetData.money += amount;
         
@@ -205,7 +218,6 @@ client.on('messageCreate', async message => {
             .setDescription(`**${message.author.username}** đã chuyển cho **${targetUser.username}** số tiền:\n\n💵 **${formatVND(amount)}**`);
         return message.reply({ embeds: [transferEmbed] });
     }
-
 
     // ==========================================
     // HỆ THỐNG CUSTOM COMMANDS (MONGODB)
@@ -223,10 +235,8 @@ client.on('messageCreate', async message => {
         const newCmd = args[1].toLowerCase();
         const response = args.slice(2).join(' '); 
         
-        // Cập nhật Cache
         customCommands[newCmd] = response;
         
-        // Lưu lên MongoDB (Tạo mới hoặc Cập nhật nếu đã có)
         await CustomCmd.findOneAndUpdate(
             { cmdName: newCmd }, 
             { response: response }, 
@@ -242,9 +252,7 @@ client.on('messageCreate', async message => {
         const targetCmd = args[1]?.toLowerCase();
         
         if (customCommands[targetCmd]) {
-            // Xóa khỏi Cache
             delete customCommands[targetCmd];
-            // Xóa khỏi Database
             await CustomCmd.findOneAndDelete({ cmdName: targetCmd });
             
             return message.reply(`✅ Đã xóa lệnh **${targetCmd}** thành công!`);
@@ -264,7 +272,6 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // Chạy Lệnh Custom
     const userMessage = message.content.toLowerCase();
     if (customCommands[userMessage]) {
         const resultEmbed = new EmbedBuilder()
@@ -283,7 +290,6 @@ client.on('messageCreate', async message => {
     }
 });
 
-// Xử lý nút Copy
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
     if (interaction.customId.startsWith('copy_btn_')) {
