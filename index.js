@@ -11,22 +11,35 @@ const client = new Client({
     ]
 });
 
-// Đường dẫn tới file chứa lệnh
-const commandsFilePath = path.join(__dirname, 'commands.json');
+// --- PHẦN NÂNG CẤP LƯU TRỮ DỮ LIỆU (CHỐNG MẤT TRÍ NHỚ) ---
+// Kiểm tra xem có ổ cứng Volume '/data' trên Railway không. Nếu có thì dùng, không thì lưu ở thư mục gốc.
+const dataFolder = fs.existsSync('/data') ? '/data' : __dirname;
+const commandsFilePath = path.join(dataFolder, 'commands.json');
 let customCommands = {};
 
 // Hàm tải các command
 function loadCommands() {
-    if (fs.existsSync(commandsFilePath)) {
-        const rawData = fs.readFileSync(commandsFilePath, 'utf8');
-        customCommands = JSON.parse(rawData);
+    // Nếu file chưa tồn tại trong ổ Volume, tiến hành copy từ Github sang hoặc tạo mới
+    if (!fs.existsSync(commandsFilePath)) {
+        const originalPath = path.join(__dirname, 'commands.json');
+        if (fs.existsSync(originalPath)) {
+            fs.copyFileSync(originalPath, commandsFilePath);
+        } else {
+            fs.writeFileSync(commandsFilePath, JSON.stringify({}, null, 2));
+        }
     }
+
+    // Đọc dữ liệu ra cho bot học thuộc
+    const rawData = fs.readFileSync(commandsFilePath, 'utf8');
+    customCommands = JSON.parse(rawData);
 }
 
+// Chạy hàm tải dữ liệu
 loadCommands();
+// -----------------------------------------------------------
 
 client.once('ready', () => {
-    console.log(`✅ Bot ${client.user.tag} đã online!`);
+    console.log(`✅ Bot ${client.user.tag} đã online! Đang dùng file dữ liệu tại: ${commandsFilePath}`);
 });
 
 // Sự kiện xử lý khi có tin nhắn
