@@ -22,25 +22,36 @@ mongoose.connect(mongoURI)
     .then(() => console.log('☁️ Đã kết nối thành công với Database MongoDB!'))
     .catch(err => console.error('❌ Lỗi kết nối MongoDB:', err));
 
-// Bảng dữ liệu tiền, ngân hàng, đồ đạc, buff may mắn
+// 1. Bảng dữ liệu User
 const userSchema = new mongoose.Schema({
     userId: { type: String, required: true, unique: true },
     money: { type: Number, default: 0 },
     bank: { type: Number, default: 0 },
     lastInterestUpdate: { type: Date, default: Date.now },
-    luck1: { type: Number, default: 0 }, // Số lượng bình may mắn [I]
-    luck2: { type: Number, default: 0 }, // Số lượng bình may mắn [II]
-    luck3: { type: Number, default: 0 }, // Số lượng bình may mắn [III]
-    luckBuff: { type: Number, default: 0 }, // % may mắn đang cộng thêm
-    luckExpiry: { type: Date, default: null } // Thời gian hết hạn buff
+    luck1: { type: Number, default: 0 }, 
+    luck2: { type: Number, default: 0 }, 
+    luck3: { type: Number, default: 0 }, 
+    luckBuff: { type: Number, default: 0 }, 
+    luckExpiry: { type: Date, default: null } 
 });
 const UserMoney = mongoose.model('UserMoney', userSchema);
 
+// 2. Bảng dữ liệu Custom Commands
 const commandSchema = new mongoose.Schema({
     cmdName: { type: String, required: true, unique: true },
     response: { type: String, required: true }
 });
 const CustomCmd = mongoose.model('CustomCmd', commandSchema);
+
+// 3. Bảng dữ liệu Shop (Lưu trữ Stock & Restock)
+const shopSchema = new mongoose.Schema({
+    shopId: { type: String, default: "global" },
+    stock1: { type: Number, default: 0 },
+    stock2: { type: Number, default: 0 },
+    stock3: { type: Number, default: 0 },
+    lastRestock: { type: Date, default: Date.now }
+});
+const Shop = mongoose.model('Shop', shopSchema);
 
 let customCommands = {};
 
@@ -79,22 +90,51 @@ async function getUserMoney(userId) {
     return user;
 }
 
-// Hàm tính lãi suất ngân hàng tự động (1.5% mỗi 30 phút)
+// Cập nhật Stock của Shop mỗi 30 phút
+async function checkAndRestock() {
+    let shop = await Shop.findOne({ shopId: "global" });
+    const now = Date.now();
+    
+    // Nếu chưa có data shop, tạo mới và random hàng
+    if (!shop) {
+        shop = new Shop({
+            stock1: Math.floor(Math.random() * 4), // random 0 - 3
+            stock2: Math.floor(Math.random() * 4),
+            stock3: Math.floor(Math.random() * 4),
+            lastRestock: new Date(now)
+        });
+        await shop.save();
+        return shop;
+    }
+
+    // Nếu đã qua 30 phút (30 * 60 * 1000 ms) kể từ lần restock cuối -> Nhập hàng mới
+    if (now - shop.lastRestock.getTime() >= 30 * 60 * 1000) {
+        shop.stock1 = Math.floor(Math.random() * 4);
+        shop.stock2 = Math.floor(Math.random() * 4);
+        shop.stock3 = Math.floor(Math.random() * 4);
+        shop.lastRestock = new Date(now);
+        await shop.save();
+    }
+    return shop;
+}
+
+// Hàm tính lãi suất ngân hàng tự động (ĐÃ SỬA: 0.5% mỗi 24 giờ)
 async function applyInterest(userData) {
     if (userData.bank > 0) {
         const now = Date.now();
         const diffMs = now - userData.lastInterestUpdate.getTime();
-        const intervals = Math.floor(diffMs / (30 * 60 * 1000));
+        const intervalMs = 24 * 60 * 60 * 1000; // 24 giờ tính bằng mili-giây
+        const intervals = Math.floor(diffMs / intervalMs);
         
         if (intervals > 0) {
-            // Tính lãi suất kép
-            userData.bank = Math.floor(userData.bank * Math.pow(1.015, intervals));
-            const remainder = diffMs % (30 * 60 * 1000); // Giữ lại phần thời gian dư
+            // Tính lãi suất kép 0.5% (1.005)
+            userData.bank = Math.floor(userData.bank * Math.pow(1.005, intervals));
+            const remainder = diffMs % intervalMs; // Giữ lại phần thời gian dư chưa đủ 1 ngày
             userData.lastInterestUpdate = new Date(now - remainder);
             await userData.save();
         }
     } else {
-        userData.lastInterestUpdate = new Date(); // Reset mốc nếu không có tiền trong bank
+        userData.lastInterestUpdate = new Date(); 
     }
 }
 
@@ -122,7 +162,7 @@ client.on('messageCreate', async message => {
         const targetUser = message.mentions.users.first() || message.author;
         const targetData = await getUserMoney(targetUser.id);
         
-        await applyInterest(targetData); // Tính lãi ngân hàng trước khi hiển thị
+        await applyInterest(targetData); 
 
         let desc = `Số dư của **${targetUser.username}**:\n\n💵 **Tiền mặt:** ${formatVND(targetData.money)}\n🏦 **Ngân hàng:** ${formatVND(targetData.bank)}`;
         if (targetData.money < 0) {
@@ -152,7 +192,7 @@ client.on('messageCreate', async message => {
         userData.money -= amount;
         userData.bank += amount;
         await userData.save();
-        return message.reply(`🏦 Giao dịch thành công!\nBạn đã gửi **${formatVND(amount)}** vào ngân hàng. Lãi suất: **+1.5% mỗi 30 phút**.`);
+        return message.reply(`🏦 Giao dịch thành công!\nBạn đã gửi **${formatVND(amount)}** vào ngân hàng. Lãi suất: **+0.5% mỗi 24 giờ**.`);
     }
 
     if (command === '.withdraw') {
@@ -160,8 +200,6 @@ client.on('messageCreate', async message => {
         if (!amountStr) return message.reply("⚠️ Sai cú pháp! Dùng: `.withdraw <số tiền>` hoặc `.withdraw all`");
         
         const userData = await getUserMoney(userId);
-        
-        // ĐÃ SỬA: Cập nhật lãi suất trước rồi check số dư trong tài khoản bank chứ không check nợ tiền mặt nữa
         await applyInterest(userData);
         
         let amount = amountStr.toLowerCase() === 'all' ? userData.bank : parseInt(amountStr.replace(/[,.]/g, ''));
@@ -189,22 +227,21 @@ client.on('messageCreate', async message => {
             }
             const stolenAmount = target.money;
             attacker.money += stolenAmount;
-            target.money = 0; // Cướp sạch sành sanh
+            target.money = 0; 
             
             await attacker.save();
             await target.save();
             return message.reply(`🎉 **ĐỈNH CAO ĐẠO CHÍCH!**\nBạn đã luồn lách và vét sạch ví của **${targetUser.username}**.\n💵 Chiếm đoạt: **${formatVND(stolenAmount)}**`);
         } else {
-            // ĐÃ UPDATE: Thất bại sẽ quét kiểm tra cả tiền mặt lẫn tài khoản ngân hàng
-            await applyInterest(attacker); // Đồng bộ tiền lãi ngân hàng trước khi phạt
+            await applyInterest(attacker); 
 
             if (attacker.money > 0) {
-                const penalty = Math.floor(attacker.money / 2); // Mất 50% tiền mặt
+                const penalty = Math.floor(attacker.money / 2); 
                 attacker.money -= penalty;
                 await attacker.save();
                 return message.reply(`🚨 **BỊ BẮT QUẢ TANG!**\nBạn ăn trộm thất bại và bị cảnh sát tóm cổ.\n💸 Hình phạt: **-${formatVND(penalty)}** (Trừ 50% tiền mặt).`);
             } else if (attacker.bank > 0) {
-                const penalty = Math.floor(attacker.bank / 2); // Tiền mặt âm/bằng 0 thì phạt 50% tiền ngân hàng
+                const penalty = Math.floor(attacker.bank / 2); 
                 attacker.bank -= penalty;
                 await attacker.save();
                 return message.reply(`🚨 **BỊ BẮT QUẢ TANG!**\nBạn ăn trộm thất bại! Tiền mặt không có xu nào nên cảnh sát đã trích thu từ tài khoản ngân hàng.\n💸 Hình phạt: **-${formatVND(penalty)}** (Trừ 50% tiền ngân hàng).`);
@@ -215,17 +252,25 @@ client.on('messageCreate', async message => {
     }
 
     if (command === '.luckyshop') {
+        const shopData = await checkAndRestock(); // Check và lấy hàng tồn kho
+
+        const getStockText = (stock) => stock > 0 ? `*(Còn lại: **${stock}** bình)*` : `*(**Hết hàng!**)*`;
+
+        // Tính thời gian nhập hàng tiếp theo
+        const nextRestock = new Date(shopData.lastRestock.getTime() + 30 * 60 * 1000);
+        const timeLeftMs = nextRestock.getTime() - Date.now();
+        const minsLeft = Math.floor(timeLeftMs / 60000);
+        const secsLeft = Math.floor((timeLeftMs % 60000) / 1000);
+
         const shopEmbed = new EmbedBuilder()
             .setColor('#9b59b6')
-            .setTitle('🛒 Cửa Hàng May Mắn')
-            .setDescription('Tăng tỷ lệ thắng khi gõ lệnh `.earnmoney`! Các bình tác dụng trong **5 phút** và **cộng dồn** với nhau!\n\n' +
-                '🧪 **1. Lucky Point [I]** - `100,000 VNĐ` *(+5% tỷ lệ thắng)*\n' +
-                '🧪 **2. Lucky Point [II]** - `300,000 VNĐ` *(+20% tỷ lệ thắng)*\n' +
-                '🧪 **3. Lucky Point [III]** - `500,000 VNĐ` *(+35% tỷ lệ thắng)*\n\n' +
-                '🔹 **Cách mua:** `.buy <1/2/3>`\n' +
-                '🔹 **Xem túi:** `.backpack`\n' +
-                '🔹 **Sử dụng:** `.usepoint <1/2/3>`')
-            .setFooter({ text: 'Lưu ý: Không hỗ trợ bán cho người đang bị âm tiền!' });
+            .setTitle('🛒 Cửa Hàng May Mắn (Đã Chống Lạm Phát)')
+            .setDescription(`Tăng tỷ lệ thắng khi gõ lệnh \`.earnmoney\`! Buff tác dụng trong **5 phút** và **cộng dồn**.\n⏳ *Đợt nhập hàng tiếp theo sau: **${minsLeft} phút ${secsLeft} giây**.*\n\n` +
+                `🧪 **1. Lucky Point [I]** - \`500,000 VNĐ\` (+3% win)\n   ↳ ${getStockText(shopData.stock1)}\n` +
+                `🧪 **2. Lucky Point [II]** - \`750,000 VNĐ\` (+6% win)\n   ↳ ${getStockText(shopData.stock2)}\n` +
+                `🧪 **3. Lucky Point [III]** - \`1,750,000 VNĐ\` (+12% win)\n   ↳ ${getStockText(shopData.stock3)}\n\n` +
+                '🔹 **Mua:** `.buy <1/2/3>` | 🔹 **Túi:** `.backpack` | 🔹 **Dùng:** `.usepoint <1/2/3>`')
+            .setFooter({ text: 'Thương nhân: Nhanh tay thì còn, chậm tay thì chờ 30 phút!' });
         return message.reply({ embeds: [shopEmbed] });
     }
 
@@ -236,20 +281,26 @@ client.on('messageCreate', async message => {
         const userData = await getUserMoney(userId);
         if (userData.money < 0) return message.reply("❌ Cửa hàng không nhận tiền âm. Hãy đi cày trả nợ trước đi!");
 
-        let price = 0, itemName = "";
-        if (item === '1') { price = 100000; itemName = "Lucky Point [I]"; }
-        if (item === '2') { price = 300000; itemName = "Lucky Point [II]"; }
-        if (item === '3') { price = 500000; itemName = "Lucky Point [III]"; }
+        const shopData = await checkAndRestock(); // Load kho hàng
 
+        let price = 0, itemName = "", stockAmount = 0;
+        if (item === '1') { price = 500000; itemName = "Lucky Point [I]"; stockAmount = shopData.stock1; }
+        if (item === '2') { price = 750000; itemName = "Lucky Point [II]"; stockAmount = shopData.stock2; }
+        if (item === '3') { price = 1750000; itemName = "Lucky Point [III]"; stockAmount = shopData.stock3; }
+
+        if (stockAmount <= 0) return message.reply(`📦 Ôi không! **${itemName}** đã cháy hàng. Bạn phải đợi đợt restock tiếp theo (mỗi 30 phút).`);
         if (userData.money < price) return message.reply(`❌ Thiếu tiền gòi bro! Cần **${formatVND(price)}** để rước ${itemName} về.`);
 
+        // Thanh toán & Trừ kho
         userData.money -= price;
-        if (item === '1') userData.luck1 += 1;
-        if (item === '2') userData.luck2 += 1;
-        if (item === '3') userData.luck3 += 1;
+        if (item === '1') { userData.luck1 += 1; shopData.stock1 -= 1; }
+        if (item === '2') { userData.luck2 += 1; shopData.stock2 -= 1; }
+        if (item === '3') { userData.luck3 += 1; shopData.stock3 -= 1; }
+        
         await userData.save();
+        await shopData.save();
 
-        return message.reply(`✅ Giao dịch thành công! Đã thêm **1x ${itemName}** vào balo.\nDùng \`.backpack\` để xem.`);
+        return message.reply(`✅ Giao dịch thành công! Đã thêm **1x ${itemName}** vào balo.\nKho trên server chỉ còn lại **${stockAmount - 1}** bình. Dùng \`.backpack\` để xem túi.`);
     }
 
     if (command === '.backpack') {
@@ -287,12 +338,12 @@ client.on('messageCreate', async message => {
         if (item === '2') userData.luck2 -= 1;
         if (item === '3') userData.luck3 -= 1;
 
+        // Chỉ số buff mới chống lạm phát
         let buffAmount = 0;
-        if (item === '1') buffAmount = 5;
-        if (item === '2') buffAmount = 20;
-        if (item === '3') buffAmount = 35;
+        if (item === '1') buffAmount = 3;
+        if (item === '2') buffAmount = 6;
+        if (item === '3') buffAmount = 12;
 
-        // Cộng dồn buff nếu còn hiệu lực, nếu không thì reset buff về chỉ số mới
         if (!userData.luckExpiry || userData.luckExpiry <= Date.now()) {
             userData.luckBuff = buffAmount;
         } else {
@@ -319,20 +370,16 @@ client.on('messageCreate', async message => {
         setTimeout(async () => {
             const userData = await getUserMoney(userId); 
             
-            // Tỷ lệ thắng mặc định
             let winChance = 100 - risk; 
 
-            // Áp dụng bùa may mắn
             let activeBuff = 0;
             if (userData.luckExpiry && userData.luckExpiry > Date.now()) {
                 activeBuff = userData.luckBuff;
                 winChance += activeBuff; 
             } else if (userData.luckExpiry && userData.luckExpiry <= Date.now() && userData.luckBuff > 0) {
-                // Hết hạn buff
                 userData.luckBuff = 0; 
             }
 
-            // Random từ 1-100, nếu nhỏ hơn hoặc bằng winChance thì thắng
             const isWin = (Math.random() * 100) <= winChance; 
             let resultEmbed = new EmbedBuilder();
 
@@ -475,11 +522,11 @@ client.on('messageCreate', async message => {
                 `• \`.money [@user]\` - Xem ví & sổ tiết kiệm\n` +
                 `• \`.earnmoney [0-99%]\` - Kiếm tiền (thêm % để tự chọn rủi ro)\n` +
                 `• \`.steal [@user]\` - Ăn trộm tiền\n` +
-                `• \`.deposit [số tiền/all]\` - Gửi tiền vào ngân hàng (lãi 1.5%/30p)\n` +
+                `• \`.deposit [số tiền/all]\` - Gửi tiền vào ngân hàng (lãi 0.5%/24h)\n` +
                 `• \`.withdraw [số tiền/all]\` - Rút tiền từ ngân hàng\n` +
                 `• \`.givemoney [@user] [số tiền]\` - Chuyển khoản\n\n` +
                 `**🛒 Cửa hàng May Mắn:**\n` +
-                `• \`.luckyshop\` - Xem gian hàng may mắn\n` +
+                `• \`.luckyshop\` - Xem gian hàng may mắn (Stock giới hạn)\n` +
                 `• \`.buy <1/2/3>\` - Mua bình may mắn\n` +
                 `• \`.backpack\` - Xem túi đồ\n` +
                 `• \`.usepoint <1/2/3>\` - Dùng đồ tăng % thắng\n\n` +
