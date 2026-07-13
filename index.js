@@ -160,17 +160,17 @@ client.on('messageCreate', async message => {
         if (!amountStr) return message.reply("⚠️ Sai cú pháp! Dùng: `.withdraw <số tiền>` hoặc `.withdraw all`");
         
         const userData = await getUserMoney(userId);
-        if (userData.money < 0) return message.reply("❌ Ngân hàng từ chối giao dịch: **Lý do: Đang mang nợ xấu (tiền mặt bị âm)**!");
         
+        // ĐÃ SỬA: Cập nhật lãi suất trước rồi check số dư trong tài khoản bank chứ không check nợ tiền mặt nữa
         await applyInterest(userData);
         
         let amount = amountStr.toLowerCase() === 'all' ? userData.bank : parseInt(amountStr.replace(/[,.]/g, ''));
-        if (isNaN(amount) || amount <= 0 || amount > userData.bank) return message.reply("⚠️ Số dư ngân hàng không đủ hoặc lệnh rút không hợp lệ!");
+        if (isNaN(amount) || amount <= 0 || amount > userData.bank) return message.reply("⚠️ Số dư trong ngân hàng của bạn không đủ hoặc lệnh rút không hợp lệ!");
         
         userData.bank -= amount;
         userData.money += amount;
         await userData.save();
-        return message.reply(`🏦 Giao dịch thành công!\nBạn đã rút **${formatVND(amount)}** từ két ngân hàng ra ngoài.`);
+        return message.reply(`🏦 Giao dịch thành công!\nBạn đã rút **${formatVND(amount)}** từ két ngân hàng ra ví tiền mặt.`);
     }
 
     if (command === '.steal') {
@@ -195,14 +195,21 @@ client.on('messageCreate', async message => {
             await target.save();
             return message.reply(`🎉 **ĐỈNH CAO ĐẠO CHÍCH!**\nBạn đã luồn lách và vét sạch ví của **${targetUser.username}**.\n💵 Chiếm đoạt: **${formatVND(stolenAmount)}**`);
         } else {
-            // Thất bại
+            // ĐÃ UPDATE: Thất bại sẽ quét kiểm tra cả tiền mặt lẫn tài khoản ngân hàng
+            await applyInterest(attacker); // Đồng bộ tiền lãi ngân hàng trước khi phạt
+
             if (attacker.money > 0) {
                 const penalty = Math.floor(attacker.money / 2); // Mất 50% tiền mặt
                 attacker.money -= penalty;
                 await attacker.save();
-                return message.reply(`🚨 **BỊ BẮT QUẢ TANG!**\nBạn ăn trộm thất bại và bị cảnh sát tóm cổ.\n💸 Hình phạt: **-${formatVND(penalty)}** (50% tiền mặt).`);
+                return message.reply(`🚨 **BỊ BẮT QUẢ TANG!**\nBạn ăn trộm thất bại và bị cảnh sát tóm cổ.\n💸 Hình phạt: **-${formatVND(penalty)}** (Trừ 50% tiền mặt).`);
+            } else if (attacker.bank > 0) {
+                const penalty = Math.floor(attacker.bank / 2); // Tiền mặt âm/bằng 0 thì phạt 50% tiền ngân hàng
+                attacker.bank -= penalty;
+                await attacker.save();
+                return message.reply(`🚨 **BỊ BẮT QUẢ TANG!**\nBạn ăn trộm thất bại! Tiền mặt không có xu nào nên cảnh sát đã trích thu từ tài khoản ngân hàng.\n💸 Hình phạt: **-${formatVND(penalty)}** (Trừ 50% tiền ngân hàng).`);
             } else {
-                return message.reply(`🚨 **BỊ BẮT QUẢ TANG!**\nBạn ăn trộm thất bại! Nhưng vì bạn đang nợ nần không có đồng nào, cảnh sát chê không thèm phạt tiền.`);
+                return message.reply(`🚨 **BỊ BẮT QUẢ TANG!**\nBạn ăn trộm thất bại! Nhưng vì cả ví tiền mặt lẫn tài khoản ngân hàng của bạn đều trống rỗng (hoặc âm), cảnh sát đành bất lực cảnh cáo rồi thả đi.`);
             }
         }
     }
