@@ -214,8 +214,8 @@ client.on('messageCreate', async message => {
         return message.reply(`✅ Cài đặt nhà tù thành công!\nKênh nhà tù: ${channelMention}\nRole tù nhân: ${roleMention}`);
     }
 
-    // Lệnh .vôtù @user <số lần> [lý do]
-    if (command === '.vôtù' || command === '.jail') {
+    // Lệnh .vaotu @user <số lần> [lý do]
+    if (command === '.vaotu' || command === '.jail') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) 
             return message.reply('❌ Bạn không phải là Cảnh Sát Trưởng (Cần quyền Admin)!');
 
@@ -225,7 +225,7 @@ client.on('messageCreate', async message => {
         }
 
         const targetMember = message.mentions.members.first();
-        if (!targetMember) return message.reply('⚠️ Dùng: `.vôtù @người_dùng <số_lần_phạt> [lý do]`');
+        if (!targetMember) return message.reply('⚠️ Dùng: `.vaotu @người_dùng <số_lần_phạt> [lý do]`');
         if (targetMember.id === message.author.id) return message.reply('⚠️ Đừng tự nhốt mình chứ?');
 
         const tasksCount = parseInt(args[2]);
@@ -255,7 +255,7 @@ client.on('messageCreate', async message => {
 
             const jailChannel = message.guild.channels.cache.get(config.prisonChannelId);
             if (jailChannel) {
-                jailChannel.send(`🚨 <@${targetMember.id}> đã bị áp giải vào tù!\n📝 **Lý do:** ${reason}\n🧹 **Hình phạt:** Để được thả, hãy chat \`.dọndẹp\` đủ **${tasksCount} lần** tại đây.`);
+                jailChannel.send(`🚨 <@${targetMember.id}> đã bị áp giải vào tù!\n📝 **Lý do:** ${reason}\n🧹 **Hình phạt:** Để được thả, hãy chat \`.cleanup\` đủ **${tasksCount} lần** tại đây.`);
             }
 
             return message.reply(`✅ Đã tống cổ **${targetMember.user.username}** vào tù với mức án: ${tasksCount} lần dọn dẹp.`);
@@ -266,8 +266,8 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // Lệnh .dọndẹp (Dành cho tù nhân)
-    if (command === '.dọndẹp' || command === '.clean') {
+    // Lệnh .cleanup (Dành cho tù nhân)
+    if (command === '.cleanup' || command === '.clean') {
         const config = await GuildConfig.findOne({ guildId: message.guild.id });
         if (!config || message.channel.id !== config.prisonChannelId) {
             return; // Chỉ hoạt động trong kênh nhà tù, nếu gõ ngoài thì lờ đi
@@ -297,13 +297,13 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // Lệnh .ratù @user (Admin thả sớm)
-    if (command === '.ratù' || command === '.unjail') {
+    // Lệnh .ratu @user (Admin thả sớm)
+    if (command === '.ratu' || command === '.unjail') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) 
             return message.reply('❌ Chỉ Admin mới có quyền đặc xá!');
 
         const targetMember = message.mentions.members.first();
-        if (!targetMember) return message.reply('⚠️ Dùng: `.ratù @người_dùng`');
+        if (!targetMember) return message.reply('⚠️ Dùng: `.ratu @người_dùng`');
 
         let prisoner = await Prisoner.findOne({ userId: targetMember.id, guildId: message.guild.id });
         if (!prisoner) return message.reply('⚠️ Người này không có trong tù!');
@@ -672,12 +672,12 @@ client.on('messageCreate', async message => {
             .setColor('#00bfff')
             .setTitle('📜 Danh Sách Lệnh')
             .setDescription(
-                `**👮 Hệ thống Cảnh Sát (Admin):**\n` +
+                `**👮 Hệ thống Cảnh Sát :**\n` +
                 `• \`.setupprison <#kênh> <@role>\` - Thiết lập nhà tù\n` +
-                `• \`.vôtù [@user] <số lần> [lý do]\` - Tống vào tù (Cất role cũ)\n` +
-                `• \`.ratù [@user]\` - Ân xá sớm không cần làm nhiệm vụ\n\n` +
+                `• \`.vaotu [@user] <số lần> [lý do]\` - Tống vào tù\n` +
+                `• \`.ratu [@user]\` - Ân xá sớm không cần làm nhiệm vụ\n\n` +
                 `**🧹 Dành cho Tù Nhân:**\n` +
-                `• \`.dọndẹp\` - Quét dọn trong kênh tù để giảm án\n\n` +
+                `• \`.cleanup\` - Quét dọn trong kênh tù để giảm án\n\n` +
                 `**🏦 Kinh tế & Ngân hàng:**\n` +
                 `• \`.money [@user]\` - Xem ví & sổ tiết kiệm\n` +
                 `• \`.earnmoney [0-99%]\` - Kiếm tiền (thêm % để tự chọn rủi ro)\n` +
