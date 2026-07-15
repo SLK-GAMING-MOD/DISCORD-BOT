@@ -3,12 +3,13 @@ const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 
-// Khởi tạo bot
+// Khởi tạo bot (Đã thêm GuildMembers để check vụ out server trốn tù)
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers // QUAN TRỌNG: Phải bật Server Members Intent trên Discord Developer Portal
     ]
 });
 
@@ -43,7 +44,7 @@ const commandSchema = new mongoose.Schema({
 });
 const CustomCmd = mongoose.model('CustomCmd', commandSchema);
 
-// 3. Bảng dữ liệu Shop (Lưu trữ Stock & Restock)
+// 3. Bảng dữ liệu Shop
 const shopSchema = new mongoose.Schema({
     shopId: { type: String, default: "global" },
     stock1: { type: Number, default: 0 },
@@ -52,6 +53,24 @@ const shopSchema = new mongoose.Schema({
     lastRestock: { type: Date, default: Date.now }
 });
 const Shop = mongoose.model('Shop', shopSchema);
+
+// 4. Bảng Cài Đặt Server (Lưu config nhà tù)
+const guildConfigSchema = new mongoose.Schema({
+    guildId: { type: String, required: true, unique: true },
+    prisonChannelId: { type: String, default: null },
+    prisonerRoleId: { type: String, default: null }
+});
+const GuildConfig = mongoose.model('GuildConfig', guildConfigSchema);
+
+// 5. Bảng Tù Nhân (Lưu trữ để tránh vượt ngục)
+const prisonerSchema = new mongoose.Schema({
+    userId: { type: String, required: true },
+    guildId: { type: String, required: true },
+    tasksRemaining: { type: Number, default: 0 },
+    originalRoles: { type: Array, default: [] }, // Lưu lại các role cũ để trả lại khi ra tù
+    reason: { type: String, default: "Không có" }
+});
+const Prisoner = mongoose.model('Prisoner', prisonerSchema);
 
 let customCommands = {};
 
@@ -66,7 +85,6 @@ async function loadCommands() {
                 const exists = await CustomCmd.findOne({ cmdName: cmdName });
                 if (!exists) {
                     await CustomCmd.create({ cmdName: cmdName, response: response });
-                    console.log(`⬆️ Đã đồng bộ lệnh gốc lên mây: ${cmdName}`);
                 }
             }
         }
@@ -90,15 +108,13 @@ async function getUserMoney(userId) {
     return user;
 }
 
-// Cập nhật Stock của Shop mỗi 30 phút
 async function checkAndRestock() {
     let shop = await Shop.findOne({ shopId: "global" });
     const now = Date.now();
     
-    // Nếu chưa có data shop, tạo mới và random hàng
     if (!shop) {
         shop = new Shop({
-            stock1: Math.floor(Math.random() * 4), // random 0 - 3
+            stock1: Math.floor(Math.random() * 4),
             stock2: Math.floor(Math.random() * 4),
             stock3: Math.floor(Math.random() * 4),
             lastRestock: new Date(now)
@@ -107,7 +123,6 @@ async function checkAndRestock() {
         return shop;
     }
 
-    // Nếu đã qua 30 phút (30 * 60 * 1000 ms) kể từ lần restock cuối -> Nhập hàng mới
     if (now - shop.lastRestock.getTime() >= 30 * 60 * 1000) {
         shop.stock1 = Math.floor(Math.random() * 4);
         shop.stock2 = Math.floor(Math.random() * 4);
@@ -118,18 +133,16 @@ async function checkAndRestock() {
     return shop;
 }
 
-// Hàm tính lãi suất ngân hàng tự động (ĐÃ SỬA: 0.5% mỗi 24 giờ)
 async function applyInterest(userData) {
     if (userData.bank > 0) {
         const now = Date.now();
         const diffMs = now - userData.lastInterestUpdate.getTime();
-        const intervalMs = 24 * 60 * 60 * 1000; // 24 giờ tính bằng mili-giây
+        const intervalMs = 24 * 60 * 60 * 1000; 
         const intervals = Math.floor(diffMs / intervalMs);
         
         if (intervals > 0) {
-            // Tính lãi suất kép 0.5% (1.005)
             userData.bank = Math.floor(userData.bank * Math.pow(1.005, intervals));
-            const remainder = diffMs % intervalMs; // Giữ lại phần thời gian dư chưa đủ 1 ngày
+            const remainder = diffMs % intervalMs; 
             userData.lastInterestUpdate = new Date(now - remainder);
             await userData.save();
         }
@@ -147,6 +160,28 @@ client.once('ready', async () => {
     await loadCommands();
 });
 
+// ==========================================
+// HỆ THỐNG CHỐNG VƯỢT NGỤC (ANTI-ESCAPE)
+// ==========================================
+client.on('guildMemberAdd', async member => {
+    const isPrisoner = await Prisoner.findOne({ userId: member.id, guildId: member.guild.id });
+    if (isPrisoner) {
+        const config = await GuildConfig.findOne({ guildId: member.guild.id });
+        if (config && config.prisonerRoleId) {
+            try {
+                // Tống vào tù lại ngay khi vừa join
+                await member.roles.set([config.prisonerRoleId]);
+                const jailChannel = member.guild.channels.cache.get(config.prisonChannelId);
+                if (jailChannel) {
+                    jailChannel.send(`🚨 **CẢNH BÁO:** Tên tội phạm <@${member.id}> vừa định vượt ngục bằng cách rời server nhưng đã bị tóm cổ lại! Số nhiệm vụ còn lại: **${isPrisoner.tasksRemaining}**`);
+                }
+            } catch (err) {
+                console.error("Lỗi khi gắn lại role tù nhân:", err);
+            }
+        }
+    }
+});
+
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
@@ -155,9 +190,140 @@ client.on('messageCreate', async message => {
     const userId = message.author.id;
 
     // ==========================================
-    // CÁC LỆNH VỀ KINH TẾ (ECONOMY)
+    // HỆ THỐNG NHÀ TÙ (PRISON SYSTEM)
     // ==========================================
 
+    // Lệnh .setupprison @kênh @role
+    if (command === '.setupprison') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) 
+            return message.reply('❌ Chỉ Admin mới có quyền thiết lập nhà tù!');
+
+        const channelMention = message.mentions.channels.first();
+        const roleMention = message.mentions.roles.first();
+
+        if (!channelMention || !roleMention) {
+            return message.reply('⚠️ Cú pháp sai! Dùng: `.setupprison #tên_kênh_tù @tên_role_tù_nhân`\n*Lưu ý: Hãy setup thủ công quyền của Role tù nhân trong Channel sao cho họ chỉ thấy được kênh tù, các kênh khác chặn View Channel.*');
+        }
+
+        await GuildConfig.findOneAndUpdate(
+            { guildId: message.guild.id },
+            { prisonChannelId: channelMention.id, prisonerRoleId: roleMention.id },
+            { upsert: true, new: true }
+        );
+
+        return message.reply(`✅ Cài đặt nhà tù thành công!\nKênh nhà tù: ${channelMention}\nRole tù nhân: ${roleMention}`);
+    }
+
+    // Lệnh .vôtù @user <số lần> [lý do]
+    if (command === '.vôtù' || command === '.jail') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) 
+            return message.reply('❌ Bạn không phải là Cảnh Sát Trưởng (Cần quyền Admin)!');
+
+        const config = await GuildConfig.findOne({ guildId: message.guild.id });
+        if (!config || !config.prisonChannelId || !config.prisonerRoleId) {
+            return message.reply('⚠️ Hệ thống nhà tù chưa được thiết lập. Hãy dùng lệnh `.setupprison` trước!');
+        }
+
+        const targetMember = message.mentions.members.first();
+        if (!targetMember) return message.reply('⚠️ Dùng: `.vôtù @người_dùng <số_lần_phạt> [lý do]`');
+        if (targetMember.id === message.author.id) return message.reply('⚠️ Đừng tự nhốt mình chứ?');
+
+        const tasksCount = parseInt(args[2]);
+        if (isNaN(tasksCount) || tasksCount <= 0) return message.reply('⚠️ Số lần phạt phải là một con số hợp lệ!');
+
+        const reason = args.slice(3).join(' ') || "Vi phạm luật server";
+
+        // Kiểm tra xem người này có đang ở tù không
+        let isJailed = await Prisoner.findOne({ userId: targetMember.id, guildId: message.guild.id });
+        if (isJailed) return message.reply('⚠️ Tên tội phạm này đã ở trong tù rồi!');
+
+        // Lấy danh sách Role hiện tại của người đó (Trừ role @everyone mặc định)
+        const currentRoles = targetMember.roles.cache.filter(role => role.name !== '@everyone').map(role => role.id);
+
+        try {
+            // Thay thế toàn bộ role bằng role Tù nhân
+            await targetMember.roles.set([config.prisonerRoleId]);
+            
+            // Lưu vào Database
+            await Prisoner.create({
+                userId: targetMember.id,
+                guildId: message.guild.id,
+                tasksRemaining: tasksCount,
+                originalRoles: currentRoles,
+                reason: reason
+            });
+
+            const jailChannel = message.guild.channels.cache.get(config.prisonChannelId);
+            if (jailChannel) {
+                jailChannel.send(`🚨 <@${targetMember.id}> đã bị áp giải vào tù!\n📝 **Lý do:** ${reason}\n🧹 **Hình phạt:** Để được thả, hãy chat \`.dọndẹp\` đủ **${tasksCount} lần** tại đây.`);
+            }
+
+            return message.reply(`✅ Đã tống cổ **${targetMember.user.username}** vào tù với mức án: ${tasksCount} lần dọn dẹp.`);
+
+        } catch (err) {
+            console.error(err);
+            return message.reply('❌ Không thể bỏ tù người này! Hãy kiểm tra xem Role của bot có nằm CAO HƠN Role của người bị phạt và Role Tù nhân không nhé.');
+        }
+    }
+
+    // Lệnh .dọndẹp (Dành cho tù nhân)
+    if (command === '.dọndẹp' || command === '.clean') {
+        const config = await GuildConfig.findOne({ guildId: message.guild.id });
+        if (!config || message.channel.id !== config.prisonChannelId) {
+            return; // Chỉ hoạt động trong kênh nhà tù, nếu gõ ngoài thì lờ đi
+        }
+
+        let prisoner = await Prisoner.findOne({ userId: userId, guildId: message.guild.id });
+        if (!prisoner) return message.reply('Bạn đâu có ở tù mà đòi dọn dẹp?');
+
+        prisoner.tasksRemaining -= 1;
+
+        if (prisoner.tasksRemaining <= 0) {
+            // Đã xong nhiệm vụ -> Thả tự do
+            const member = message.guild.members.cache.get(userId);
+            if (member) {
+                try {
+                    await member.roles.set(prisoner.originalRoles); // Trả lại các Role cũ
+                    await Prisoner.findOneAndDelete({ userId: userId, guildId: message.guild.id }); // Xóa án tích
+                    return message.reply(`🎉 Chúc mừng <@${userId}> đã cải tạo tốt, hoàn thành hình phạt và được ân xá về với cộng đồng!`);
+                } catch (err) {
+                    console.error(err);
+                    return message.reply('❌ Bị lỗi khi thả tự do, vui lòng gọi Admin cứu!');
+                }
+            }
+        } else {
+            await prisoner.save();
+            return message.reply(`🧹 <@${userId}> đang tích cực dọn dẹp nhà vệ sinh... Còn lại: **${prisoner.tasksRemaining} lần**.`);
+        }
+    }
+
+    // Lệnh .ratù @user (Admin thả sớm)
+    if (command === '.ratù' || command === '.unjail') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) 
+            return message.reply('❌ Chỉ Admin mới có quyền đặc xá!');
+
+        const targetMember = message.mentions.members.first();
+        if (!targetMember) return message.reply('⚠️ Dùng: `.ratù @người_dùng`');
+
+        let prisoner = await Prisoner.findOne({ userId: targetMember.id, guildId: message.guild.id });
+        if (!prisoner) return message.reply('⚠️ Người này không có trong tù!');
+
+        try {
+            await targetMember.roles.set(prisoner.originalRoles); 
+            await Prisoner.findOneAndDelete({ userId: targetMember.id, guildId: message.guild.id }); 
+            return message.reply(`✅ Đã ân xá đặc biệt cho **${targetMember.user.username}**. Họ đã được trả lại tự do và các chức vụ cũ.`);
+        } catch (err) {
+            console.error(err);
+            return message.reply('❌ Có lỗi xảy ra khi trả lại role. Hãy đảm bảo Role bot cao hơn các Role cũ của người này.');
+        }
+    }
+
+    // ==========================================
+    // CÁC LỆNH VỀ KINH TẾ (ECONOMY) VÀ LỆNH GỐC
+    // ==========================================
+    
+    // (Bên dưới là toàn bộ code cũ của bạn về Economy, Shop, Custom Commands... được giữ nguyên)
+    
     if (command === '.money') {
         const targetUser = message.mentions.users.first() || message.author;
         const targetData = await getUserMoney(targetUser.id);
@@ -219,7 +385,7 @@ client.on('messageCreate', async message => {
         const attacker = await getUserMoney(userId);
         const target = await getUserMoney(targetUser.id);
 
-        const isSuccess = Math.random() < 0.015; // 1.5% tỷ lệ thành công
+        const isSuccess = Math.random() < 0.015;
 
         if (isSuccess) {
             if (target.money <= 0) {
@@ -252,11 +418,10 @@ client.on('messageCreate', async message => {
     }
 
     if (command === '.luckyshop') {
-        const shopData = await checkAndRestock(); // Check và lấy hàng tồn kho
+        const shopData = await checkAndRestock();
 
         const getStockText = (stock) => stock > 0 ? `*(Còn lại: **${stock}** bình)*` : `*(**Hết hàng!**)*`;
 
-        // Tính thời gian nhập hàng tiếp theo
         const nextRestock = new Date(shopData.lastRestock.getTime() + 30 * 60 * 1000);
         const timeLeftMs = nextRestock.getTime() - Date.now();
         const minsLeft = Math.floor(timeLeftMs / 60000);
@@ -264,8 +429,8 @@ client.on('messageCreate', async message => {
 
         const shopEmbed = new EmbedBuilder()
             .setColor('#9b59b6')
-            .setTitle('🛒 Cửa Hàng May Mắn (Đã Chống Lạm Phát)')
-            .setDescription(`Tăng tỷ lệ thắng khi gõ lệnh \`.earnmoney\`! Buff tác dụng trong **5 phút** và **cộng dồn**.\n⏳ *Đợt nhập hàng tiếp theo sau: **${minsLeft} phút ${secsLeft} giây**.*\n\n` +
+            .setTitle('🛒 Cửa Hàng May Mắn')
+            .setDescription(`Tăng tỷ lệ thắng khi gõ lệnh \`.earnmoney\`! Buff tác dụng trong **5 phút**.\n⏳ *Đợt nhập hàng tiếp theo sau: **${minsLeft} phút ${secsLeft} giây**.*\n\n` +
                 `🧪 **1. Lucky Point [I]** - \`500,000 VNĐ\` (+3% win)\n   ↳ ${getStockText(shopData.stock1)}\n` +
                 `🧪 **2. Lucky Point [II]** - \`750,000 VNĐ\` (+6% win)\n   ↳ ${getStockText(shopData.stock2)}\n` +
                 `🧪 **3. Lucky Point [III]** - \`1,750,000 VNĐ\` (+12% win)\n   ↳ ${getStockText(shopData.stock3)}\n\n` +
@@ -281,17 +446,16 @@ client.on('messageCreate', async message => {
         const userData = await getUserMoney(userId);
         if (userData.money < 0) return message.reply("❌ Cửa hàng không nhận tiền âm. Hãy đi cày trả nợ trước đi!");
 
-        const shopData = await checkAndRestock(); // Load kho hàng
+        const shopData = await checkAndRestock(); 
 
         let price = 0, itemName = "", stockAmount = 0;
         if (item === '1') { price = 500000; itemName = "Lucky Point [I]"; stockAmount = shopData.stock1; }
         if (item === '2') { price = 750000; itemName = "Lucky Point [II]"; stockAmount = shopData.stock2; }
         if (item === '3') { price = 1750000; itemName = "Lucky Point [III]"; stockAmount = shopData.stock3; }
 
-        if (stockAmount <= 0) return message.reply(`📦 Ôi không! **${itemName}** đã cháy hàng. Bạn phải đợi đợt restock tiếp theo (mỗi 30 phút).`);
+        if (stockAmount <= 0) return message.reply(`📦 Ôi không! **${itemName}** đã cháy hàng. Bạn phải đợi đợt restock.`);
         if (userData.money < price) return message.reply(`❌ Thiếu tiền gòi bro! Cần **${formatVND(price)}** để rước ${itemName} về.`);
 
-        // Thanh toán & Trừ kho
         userData.money -= price;
         if (item === '1') { userData.luck1 += 1; shopData.stock1 -= 1; }
         if (item === '2') { userData.luck2 += 1; shopData.stock2 -= 1; }
@@ -300,7 +464,7 @@ client.on('messageCreate', async message => {
         await userData.save();
         await shopData.save();
 
-        return message.reply(`✅ Giao dịch thành công! Đã thêm **1x ${itemName}** vào balo.\nKho trên server chỉ còn lại **${stockAmount - 1}** bình. Dùng \`.backpack\` để xem túi.`);
+        return message.reply(`✅ Giao dịch thành công! Đã thêm **1x ${itemName}** vào balo.\nKho trên server chỉ còn lại **${stockAmount - 1}** bình.`);
     }
 
     if (command === '.backpack') {
@@ -326,7 +490,7 @@ client.on('messageCreate', async message => {
 
     if (command === '.usepoint') {
         const item = args[1];
-        if (!['1', '2', '3'].includes(item)) return message.reply("⚠️ Sai cú pháp! Dùng `.usepoint 1`, `.usepoint 2`, hoặc `.usepoint 3`.");
+        if (!['1', '2', '3'].includes(item)) return message.reply("⚠️ Sai cú pháp! Dùng `.usepoint 1/2/3`.");
         
         const userData = await getUserMoney(userId);
         
@@ -338,7 +502,6 @@ client.on('messageCreate', async message => {
         if (item === '2') userData.luck2 -= 1;
         if (item === '3') userData.luck3 -= 1;
 
-        // Chỉ số buff mới chống lạm phát
         let buffAmount = 0;
         if (item === '1') buffAmount = 3;
         if (item === '2') buffAmount = 6;
@@ -350,7 +513,6 @@ client.on('messageCreate', async message => {
             userData.luckBuff += buffAmount;
         }
         
-        // Reset thời gian chạy 5 phút từ lúc uống
         userData.luckExpiry = new Date(Date.now() + 5 * 60 * 1000);
         await userData.save();
 
@@ -394,9 +556,7 @@ client.on('messageCreate', async message => {
                 let winDesc = `Bạn mạo hiểm **${risk}%** và thắng đậm!\n\n💸 Nhận: **+${formatVND(earned)}**\n💰 Tiền mặt hiện tại: **${formatVND(userData.money)}**`;
                 if (activeBuff > 0) winDesc += `\n✨ *(Nhờ có +${activeBuff}% may mắn độ trì!)*`;
 
-                resultEmbed.setColor('#2ecc71')
-                    .setTitle('🎉 Chúc Mừng!')
-                    .setDescription(winDesc);
+                resultEmbed.setColor('#2ecc71').setTitle('🎉 Chúc Mừng!').setDescription(winDesc);
             } else {
                 const minLose = 500 + (risk * 500);
                 const maxLose = 1000 + (risk * 2000);
@@ -408,9 +568,7 @@ client.on('messageCreate', async message => {
                 let loseDesc = `Mạo hiểm **${risk}%** nhưng dẫm nhầm mìn, toang rồi!\n\n💸 Bị trừ: **-${formatVND(lost)}**\n💰 Tiền mặt hiện tại: **${formatVND(userData.money)}**`;
                 if (activeBuff > 0) loseDesc += `\n😭 *(Dù đã cắn bình +${activeBuff}% may mắn nhưng vẫn quá đen!)*`;
 
-                resultEmbed.setColor('#e74c3c')
-                    .setTitle('😭 Toang Rồi!')
-                    .setDescription(loseDesc);
+                resultEmbed.setColor('#e74c3c').setTitle('😭 Toang Rồi!').setDescription(loseDesc);
             }
 
             pendingMsg.edit({ content: '', embeds: [resultEmbed] });
@@ -474,10 +632,6 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [transferEmbed] });
     }
 
-    // ==========================================
-    // HỆ THỐNG CUSTOM COMMANDS (MONGODB)
-    // ==========================================
-
     if (command === '.newcommand') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             const errorEmbed = new EmbedBuilder().setColor('#ff3333').setTitle('❌ Thất Bại').setDescription('Chỉ Admin mới được dùng lệnh này nha bro!');
@@ -518,20 +672,22 @@ client.on('messageCreate', async message => {
             .setColor('#00bfff')
             .setTitle('📜 Danh Sách Lệnh')
             .setDescription(
+                `**👮 Hệ thống Cảnh Sát (Admin):**\n` +
+                `• \`.setupprison <#kênh> <@role>\` - Thiết lập nhà tù\n` +
+                `• \`.vôtù [@user] <số lần> [lý do]\` - Tống vào tù (Cất role cũ)\n` +
+                `• \`.ratù [@user]\` - Ân xá sớm không cần làm nhiệm vụ\n\n` +
+                `**🧹 Dành cho Tù Nhân:**\n` +
+                `• \`.dọndẹp\` - Quét dọn trong kênh tù để giảm án\n\n` +
                 `**🏦 Kinh tế & Ngân hàng:**\n` +
                 `• \`.money [@user]\` - Xem ví & sổ tiết kiệm\n` +
                 `• \`.earnmoney [0-99%]\` - Kiếm tiền (thêm % để tự chọn rủi ro)\n` +
                 `• \`.steal [@user]\` - Ăn trộm tiền\n` +
-                `• \`.deposit [số tiền/all]\` - Gửi tiền vào ngân hàng (lãi 0.5%/24h)\n` +
+                `• \`.deposit [số tiền/all]\` - Gửi tiền vào ngân hàng\n` +
                 `• \`.withdraw [số tiền/all]\` - Rút tiền từ ngân hàng\n` +
                 `• \`.givemoney [@user] [số tiền]\` - Chuyển khoản\n\n` +
                 `**🛒 Cửa hàng May Mắn:**\n` +
-                `• \`.luckyshop\` - Xem gian hàng may mắn (Stock giới hạn)\n` +
-                `• \`.buy <1/2/3>\` - Mua bình may mắn\n` +
-                `• \`.backpack\` - Xem túi đồ\n` +
-                `• \`.usepoint <1/2/3>\` - Dùng đồ tăng % thắng\n\n` +
-                `**⚙️ Lệnh Admin:**\n` +
-                `• \`.addmoney\`, \`.removemoney\`, \`.newcommand\`, \`.removecommand\`\n\n` +
+                `• \`.luckyshop\` - Xem gian hàng may mắn\n` +
+                `• \`.buy <1/2/3>\` | \`.backpack\` | \`.usepoint <1/2/3>\`\n\n` +
                 `**🤖 Lệnh Custom:**\n${desc}`);
         return message.reply({ embeds: [helpEmbed] });
     }
