@@ -255,7 +255,7 @@ client.on('messageCreate', async message => {
 
             const jailChannel = message.guild.channels.cache.get(config.prisonChannelId);
             if (jailChannel) {
-                jailChannel.send(`🚨 <@${targetMember.id}> đã bị áp giải vào tù!\n📝 **Lý do:** ${reason}\n🧹 **Hình phạt:** Để được thả, hãy chat \`.cleanup\` đủ **${tasksCount} lần** tại đây.`);
+                jailChannel.send(`🚨 <@${targetMember.id}> đã bị áp giải vào tù!\n📝 **Lý do:** ${reason}\n🧹 **Hình phạt:** Để được thả, hãy \`.cleanup\` đủ **${tasksCount} lần** tại đây.`);
             }
 
             return message.reply(`✅ Đã tống cổ **${targetMember.user.username}** vào tù với mức án: ${tasksCount} lần dọn dẹp.`);
