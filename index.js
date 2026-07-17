@@ -151,7 +151,7 @@ async function applyInterest(userData) {
         const intervals = Math.floor(diffMs / intervalMs);
         
         if (intervals > 0) {
-            userData.bank = Math.floor(userData.bank * Math.pow(1.005, intervals));
+            userData.bank = Math.floor(userData.bank * Math.pow(1.05, intervals));
             const remainder = diffMs % intervalMs; 
             userData.lastInterestUpdate = new Date(now - remainder);
             await userData.save();
@@ -343,7 +343,7 @@ client.on('messageCreate', async message => {
         userData.money -= amount;
         userData.bank += amount;
         await userData.save();
-        return replyEmbed(message, '#2ecc71', `🏦 Giao dịch thành công!\nBạn đã gửi **${formatVND(amount)}** vào ngân hàng. Lãi suất: **+0.5% mỗi 24 giờ**.`);
+        return replyEmbed(message, '#2ecc71', `🏦 Giao dịch thành công!\nBạn đã gửi **${formatVND(amount)}** vào ngân hàng. Lãi suất: **+5% mỗi 24 giờ**.`);
     }
 
     if (command === '.withdraw') {
