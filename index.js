@@ -23,7 +23,7 @@ mongoose.connect(mongoURI)
     .then(() => console.log('☁️ Đã kết nối thành công với Database MongoDB!'))
     .catch(err => console.error('❌ Lỗi kết nối MongoDB:', err));
 
-// 1. Bảng dữ liệu User (Đã thêm stealCooldown)
+// 1. Bảng dữ liệu User (Đã thêm level Balo & Đếm số lần dùng thuốc)
 const userSchema = new mongoose.Schema({
     userId: { type: String, required: true, unique: true },
     money: { type: Number, default: 0 },
@@ -34,7 +34,11 @@ const userSchema = new mongoose.Schema({
     luck3: { type: Number, default: 0 }, 
     luckBuff: { type: Number, default: 0 }, 
     luckExpiry: { type: Date, default: null },
-    stealCooldown: { type: Date, default: null } // Thêm thời gian tạm giam cho lệnh steal
+    stealCooldown: { type: Date, default: null },
+    backpackLevel: { type: Number, default: 0 }, // Cấp độ Balo (Mặc định 0 = 5 món/loại)
+    usedLuck1: { type: Number, default: 0 },     // Số lần đã dùng Lọ I trong đợt buff
+    usedLuck2: { type: Number, default: 0 },     // Số lần đã dùng Lọ II trong đợt buff
+    usedLuck3: { type: Number, default: 0 }      // Số lần đã dùng Lọ III trong đợt buff
 });
 const UserMoney = mongoose.model('UserMoney', userSchema);
 
@@ -75,7 +79,6 @@ let customCommands = {};
 // CÁC HÀM HỖ TRỢ
 // ==========================================
 
-// Hàm tạo nhanh Embed cho tất cả tin nhắn
 function replyEmbed(message, color, description, title = null) {
     const embed = new EmbedBuilder()
         .setColor(color)
@@ -362,9 +365,6 @@ client.on('messageCreate', async message => {
         return replyEmbed(message, '#2ecc71', `🏦 Giao dịch thành công!\nBạn đã rút **${formatVND(amount)}** từ két ngân hàng ra ví tiền mặt.`);
     }
 
-    // ==========================================
-    // LỆNH DOUBLE OR NOTHING (MỚI)
-    // ==========================================
     if (command === '.doubleornothing' || command === '.don') {
         const amountStr = args[1];
         if (!amountStr) return replyEmbed(message, '#e67e22', '⚠️ Dùng: `.don <số tiền>` hoặc `.don all`');
@@ -393,9 +393,6 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [embed] });
     }
 
-    // ==========================================
-    // LỆNH STEAL (ĐÃ CẬP NHẬT TẠM GIAM 1H)
-    // ==========================================
     if (command === '.steal') {
         const targetUser = message.mentions.users.first();
         if (!targetUser) return replyEmbed(message, '#e67e22', "⚠️ Bạn phải tag người muốn trộm! Ví dụ: `.steal @ai_đó`");
@@ -403,7 +400,6 @@ client.on('messageCreate', async message => {
 
         const attacker = await getUserMoney(userId);
 
-        // KIỂM TRA COOLDOWN (TẠM GIAM 1 GIỜ)
         if (attacker.stealCooldown && attacker.stealCooldown > Date.now()) {
             const timeLeft = Math.ceil((attacker.stealCooldown.getTime() - Date.now()) / 60000);
             return replyEmbed(message, '#e74c3c', `⏳ Bạn đang bị tạm giam vì tội ăn trộm thất bại! Vui lòng chờ **${timeLeft} phút** nữa để ra tù và hành nghề tiếp.`);
@@ -437,8 +433,7 @@ client.on('messageCreate', async message => {
                 await attacker.save();
                 return replyEmbed(message, '#e74c3c', `🚨 **BỊ BẮT QUẢ TANG!**\nBạn ăn trộm thất bại! Tiền mặt không có xu nào nên cảnh sát đã trích thu từ tài khoản ngân hàng.\n💸 Hình phạt: **-${formatVND(penalty)}** (Trừ 50% tiền ngân hàng).`);
             } else {
-                // PHẠT TẠM GIAM 1 GIỜ VÌ KHÔNG CÓ TIỀN NỘP PHẠT
-                attacker.stealCooldown = new Date(Date.now() + 60 * 60 * 1000); // Tạm giam 1h
+                attacker.stealCooldown = new Date(Date.now() + 60 * 60 * 1000); 
                 await attacker.save();
                 return replyEmbed(message, '#e74c3c', `🚨 **BỊ BẮT QUẢ TANG!**\nBạn ăn trộm thất bại! Vì cả ví tiền mặt lẫn tài khoản ngân hàng của bạn đều trống rỗng (hoặc âm), cảnh sát đã tống bạn vào đồn.\n⏰ **Hình phạt:** Tạm giam không thể dùng lệnh steal trong **1 giờ**!`);
             }
@@ -466,6 +461,30 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [shopEmbed] });
     }
 
+    // ==========================================
+    // LỆNH NÂNG CẤP BALO (MỚI)
+    // ==========================================
+    if (command === '.upgradebackpack' || command === '.ubp') {
+        const userData = await getUserMoney(userId);
+        if (userData.money < 0) return replyEmbed(message, '#e74c3c', '❌ Cửa hàng không nhận tiền âm. Hãy đi cày trả nợ trước đi!');
+
+        const currentLevel = userData.backpackLevel || 0;
+        const upgradeCost = 100000 * Math.pow(5, currentLevel); // 100k -> 500k -> 2.500k -> ...
+        const currentCap = 5 + currentLevel * 5;
+        const nextCap = currentCap + 5;
+
+        if (userData.money < upgradeCost) {
+            return replyEmbed(message, '#e74c3c', `❌ Bạn không đủ tiền nâng cấp balo!\n\n🎒 Level hiện tại: **Level ${currentLevel}** (Tối đa ${currentCap} món/loại)\n💵 Phí nâng cấp lên **Level ${currentLevel + 1}** (Tối đa ${nextCap} món/loại): **${formatVND(upgradeCost)}**\n💰 Tiền mặt bạn có: **${formatVND(userData.money)}**`);
+        }
+
+        userData.money -= upgradeCost;
+        userData.backpackLevel = currentLevel + 1;
+        await userData.save();
+
+        const nextUpgradeCost = 100000 * Math.pow(5, userData.backpackLevel);
+        return replyEmbed(message, '#2ecc71', `🎉 **NÂNG CẤP BALO THÀNH CÔNG!**\n\n🎒 Cấp độ mới: **Level ${userData.backpackLevel}**\n📦 Sức chứa mới: **${nextCap} món mỗi loại**\n💸 Đã trừ: **-${formatVND(upgradeCost)}**\n💵 Phí nâng cấp lần tới: **${formatVND(nextUpgradeCost)}**`);
+    }
+
     if (command === '.buy') {
         const item = args[1];
         if (!['1', '2', '3'].includes(item)) return replyEmbed(message, '#e67e22', "⚠️ Món này không bán! Nhập `.buy 1`, `.buy 2`, hoặc `.buy 3`.");
@@ -473,12 +492,17 @@ client.on('messageCreate', async message => {
         const userData = await getUserMoney(userId);
         if (userData.money < 0) return replyEmbed(message, '#e74c3c', "❌ Cửa hàng không nhận tiền âm. Hãy đi cày trả nợ trước đi!");
 
+        const maxCapacity = 5 + (userData.backpackLevel || 0) * 5; // Tính sức chứa tối đa hiện tại
         const shopData = await checkAndRestock(); 
 
-        let price = 0, itemName = "", stockAmount = 0;
-        if (item === '1') { price = 500000; itemName = "Lucky Point [I]"; stockAmount = shopData.stock1; }
-        if (item === '2') { price = 750000; itemName = "Lucky Point [II]"; stockAmount = shopData.stock2; }
-        if (item === '3') { price = 1750000; itemName = "Lucky Point [III]"; stockAmount = shopData.stock3; }
+        let price = 0, itemName = "", stockAmount = 0, userCurrentAmount = 0;
+        if (item === '1') { price = 500000; itemName = "Lucky Point [I]"; stockAmount = shopData.stock1; userCurrentAmount = userData.luck1; }
+        if (item === '2') { price = 750000; itemName = "Lucky Point [II]"; stockAmount = shopData.stock2; userCurrentAmount = userData.luck2; }
+        if (item === '3') { price = 1750000; itemName = "Lucky Point [III]"; stockAmount = shopData.stock3; userCurrentAmount = userData.luck3; }
+
+        if (userCurrentAmount >= maxCapacity) {
+            return replyEmbed(message, '#e74c3c', `📦 Balo của bạn đã đạt giới hạn chứa loại này (**${userCurrentAmount}/${maxCapacity}** bình)!\nHãy gõ lệnh \`.ubp\` để nâng cấp sức chứa Balo.`);
+        }
 
         if (stockAmount <= 0) return replyEmbed(message, '#e67e22', `📦 Ôi không! **${itemName}** đã cháy hàng. Bạn phải đợi đợt restock.`);
         if (userData.money < price) return replyEmbed(message, '#e74c3c', `❌ Thiếu tiền gòi bro! Cần **${formatVND(price)}** để rước ${itemName} về.`);
@@ -491,30 +515,38 @@ client.on('messageCreate', async message => {
         await userData.save();
         await shopData.save();
 
-        return replyEmbed(message, '#2ecc71', `✅ Giao dịch thành công! Đã thêm **1x ${itemName}** vào balo.\nKho trên server chỉ còn lại **${stockAmount - 1}** bình.`);
+        return replyEmbed(message, '#2ecc71', `✅ Giao dịch thành công! Đã thêm **1x ${itemName}** vào balo.\nBalo hiện tại: **${userCurrentAmount + 1}/${maxCapacity}** bình.`);
     }
 
     if (command === '.backpack') {
         const userData = await getUserMoney(userId);
+        const maxCap = 5 + (userData.backpackLevel || 0) * 5;
+        const bpLevel = userData.backpackLevel || 0;
+        const nextUpgradeCost = 100000 * Math.pow(5, bpLevel);
         
         let buffStatus = "Không có";
         if (userData.luckExpiry && userData.luckExpiry > Date.now()) {
             const timeLeft = Math.floor((userData.luckExpiry.getTime() - Date.now()) / 1000);
-            buffStatus = `**+${userData.luckBuff}% may mắn** (Còn ${Math.floor(timeLeft/60)} phút ${timeLeft%60} giây)`;
+            buffStatus = `**+${userData.luckBuff.toFixed(2)}% may mắn** (Còn ${Math.floor(timeLeft/60)} phút ${timeLeft%60} giây)`;
         }
 
         const bpEmbed = new EmbedBuilder()
             .setColor('#e67e22')
             .setTitle('🎒 Balo Của Bạn')
-            .setDescription(`✨ **Buff Kích Hoạt:** ${buffStatus}\n\n` +
+            .setDescription(`✨ **Buff Kích Hoạt:** ${buffStatus}\n` +
+                `🎒 **Cấp Balo:** Level ${bpLevel} (Sức chứa: **${maxCap}** món/loại)\n` +
+                `💵 **Phí nâng cấp tiếp theo:** ${formatVND(nextUpgradeCost)} (\`.ubp\`)\n\n` +
                 `**Vật phẩm đang có:**\n` +
-                `🧪 **Lucky Point [I]:** ${userData.luck1} bình\n` +
-                `🧪 **Lucky Point [II]:** ${userData.luck2} bình\n` +
-                `🧪 **Lucky Point [III]:** ${userData.luck3} bình\n\n` +
-                `Mở nút dùng: \`.usepoint <1/2/3>\``);
+                `🧪 **Lucky Point [I]:** ${userData.luck1}/${maxCap} bình *(Đã dùng: ${userData.usedLuck1 || 0})*\n` +
+                `🧪 **Lucky Point [II]:** ${userData.luck2}/${maxCap} bình *(Đã dùng: ${userData.usedLuck2 || 0})*\n` +
+                `🧪 **Lucky Point [III]:** ${userData.luck3}/${maxCap} bình *(Đã dùng: ${userData.usedLuck3 || 0})*\n\n` +
+                `Mở nút dùng: \`.usepoint <1/2/3>\` | Nâng cấp: \`.ubp\``);
         return message.reply({ embeds: [bpEmbed] });
     }
 
+    // ==========================================
+    // LỆNH SỬ DỤNG THUỐC (ĐÃ CẬP NHẬT CƠ CHẾ KHÁNG THUỐC)
+    // ==========================================
     if (command === '.usepoint') {
         const item = args[1];
         if (!['1', '2', '3'].includes(item)) return replyEmbed(message, '#e67e22', "⚠️ Sai cú pháp! Dùng `.usepoint 1/2/3`.");
@@ -524,26 +556,53 @@ client.on('messageCreate', async message => {
         if (item === '1' && userData.luck1 <= 0) return replyEmbed(message, '#e74c3c', "❌ Balo hết Lucky Point [I] rồi!");
         if (item === '2' && userData.luck2 <= 0) return replyEmbed(message, '#e74c3c', "❌ Balo hết Lucky Point [II] rồi!");
         if (item === '3' && userData.luck3 <= 0) return replyEmbed(message, '#e74c3c', "❌ Balo hết Lucky Point [III] rồi!");
-        
-        if (item === '1') userData.luck1 -= 1;
-        if (item === '2') userData.luck2 -= 1;
-        if (item === '3') userData.luck3 -= 1;
 
-        let buffAmount = 0;
-        if (item === '1') buffAmount = 3;
-        if (item === '2') buffAmount = 6;
-        if (item === '3') buffAmount = 12;
-
+        // Nếu buff đã hết hạn -> Reset lại chỉ số buff & bộ đếm số bình đã dùng
         if (!userData.luckExpiry || userData.luckExpiry <= Date.now()) {
-            userData.luckBuff = buffAmount;
-        } else {
-            userData.luckBuff += buffAmount;
+            userData.luckBuff = 0;
+            userData.usedLuck1 = 0;
+            userData.usedLuck2 = 0;
+            userData.usedLuck3 = 0;
         }
-        
-        userData.luckExpiry = new Date(Date.now() + 5 * 60 * 1000);
+
+        let baseAmount = 0;
+        let usedCount = 0;
+
+        if (item === '1') {
+            userData.luck1 -= 1;
+            baseAmount = 3;
+            usedCount = userData.usedLuck1 || 0;
+        } else if (item === '2') {
+            userData.luck2 -= 1;
+            baseAmount = 6;
+            usedCount = userData.usedLuck2 || 0;
+        } else if (item === '3') {
+            userData.luck3 -= 1;
+            baseAmount = 12;
+            usedCount = userData.usedLuck3 || 0;
+        }
+
+        // TÍNH TOÁN CƠ CHẾ KHÁNG THUỐC
+        // Mỗi 3 lọ cùng loại sẽ giảm 50% hiệu quả (tier = floor(usedCount / 3))
+        const tier = Math.floor(usedCount / 3);
+        const effMultiplier = Math.pow(0.5, tier); // 1.0 (100%), 0.5 (50%), 0.25 (25%), ...
+        const actualBuff = baseAmount * effMultiplier;
+
+        // Cập nhật lượt dùng
+        if (item === '1') userData.usedLuck1 = usedCount + 1;
+        if (item === '2') userData.usedLuck2 = usedCount + 1;
+        if (item === '3') userData.usedLuck3 = usedCount + 1;
+
+        userData.luckBuff = parseFloat((userData.luckBuff + actualBuff).toFixed(4));
+        userData.luckExpiry = new Date(Date.now() + 5 * 60 * 1000); // 5 phút
         await userData.save();
 
-        return replyEmbed(message, '#2ecc71', `🧪 Ực ực... Bạn cảm thấy vô cùng may mắn!\nHiệu ứng: **+${buffAmount}%** vào tỷ lệ kiếm tiền. (Tổng may mắn: **+${userData.luckBuff}%**, duy trì 5 phút).`);
+        let resistanceNote = "";
+        if (tier > 0) {
+            resistanceNote = `\n⚠️ *Kháng thuốc (Đã dùng lọ thứ ${usedCount + 1}): Hiệu quả bị giảm còn ${(effMultiplier * 100).toFixed(1)}%!*`;
+        }
+
+        return replyEmbed(message, '#2ecc71', `🧪 Ực ực... Bạn đã uống **Lucky Point [${item === '1' ? 'I' : item === '2' ? 'II' : 'III'}]**!\nHiệu ứng nhận được: **+${actualBuff.toFixed(2)}%** may mắn.${resistanceNote}\n✨ **Tổng may mắn hiện tại:** +${userData.luckBuff.toFixed(2)}% (Duy trì 5 phút).`);
     }
 
     if (command === '.earnmoney') {
@@ -554,7 +613,6 @@ client.on('messageCreate', async message => {
             if (risk > 99) risk = 99; 
         }
 
-        // Tùy chỉnh Embed chờ 3s chuẩn xác như trong ảnh 1000185657.png
         const pendingEmbed = new EmbedBuilder()
             .setColor('#f1c40f')
             .setDescription('⏳ Bot đang đi kiếm tiền cho bạn, chờ 3 giây nhé...');
@@ -571,7 +629,12 @@ client.on('messageCreate', async message => {
                 activeBuff = userData.luckBuff;
                 winChance += activeBuff; 
             } else if (userData.luckExpiry && userData.luckExpiry <= Date.now() && userData.luckBuff > 0) {
+                // Buff đã hết hạn -> Reset toàn bộ chỉ số buff & kháng thuốc
                 userData.luckBuff = 0; 
+                userData.usedLuck1 = 0;
+                userData.usedLuck2 = 0;
+                userData.usedLuck3 = 0;
+                await userData.save();
             }
 
             const isWin = (Math.random() * 100) <= winChance; 
@@ -586,7 +649,7 @@ client.on('messageCreate', async message => {
                 await userData.save(); 
 
                 let winDesc = `Bạn mạo hiểm **${risk}%** và thắng đậm!\n\n💸 Nhận: **+${formatVND(earned)}**\n💰 Tiền mặt hiện tại: **${formatVND(userData.money)}**`;
-                if (activeBuff > 0) winDesc += `\n✨ *(Nhờ có +${activeBuff}% may mắn độ trì!)*`;
+                if (activeBuff > 0) winDesc += `\n✨ *(Nhờ có +${activeBuff.toFixed(2)}% may mắn độ trì!)*`;
 
                 resultEmbed.setColor('#2ecc71').setTitle('🎉 Chúc Mừng!').setDescription(winDesc);
             } else {
@@ -598,7 +661,7 @@ client.on('messageCreate', async message => {
                 await userData.save(); 
 
                 let loseDesc = `Mạo hiểm **${risk}%** nhưng dẫm nhầm mìn, toang rồi!\n\n💸 Bị trừ: **-${formatVND(lost)}**\n💰 Tiền mặt hiện tại: **${formatVND(userData.money)}**`;
-                if (activeBuff > 0) loseDesc += `\n😭 *(Dù đã cắn bình +${activeBuff}% may mắn nhưng vẫn quá đen!)*`;
+                if (activeBuff > 0) loseDesc += `\n😭 *(Dù đã cắn bình +${activeBuff.toFixed(2)}% may mắn nhưng vẫn quá đen!)*`;
 
                 resultEmbed.setColor('#e74c3c').setTitle('😭 Toang Rồi!').setDescription(loseDesc);
             }
@@ -721,9 +784,12 @@ client.on('messageCreate', async message => {
                 `• \`.deposit [số tiền/all]\` - Gửi tiền vào ngân hàng\n` +
                 `• \`.withdraw [số tiền/all]\` - Rút tiền từ ngân hàng\n` +
                 `• \`.givemoney [@user] [số tiền]\` - Chuyển khoản\n\n` +
-                `**🛒 Cửa hàng May Mắn:**\n` +
+                `**🛒 Cửa hàng & Balo:**\n` +
                 `• \`.luckyshop\` - Xem gian hàng may mắn\n` +
-                `• \`.buy <1/2/3>\` | \`.backpack\` | \`.usepoint <1/2/3>\`\n\n` +
+                `• \`.buy <1/2/3>\` - Mua nước may mắn\n` +
+                `• \`.backpack\` - Xem túi đồ & trạng thái buff\n` +
+                `• \`.usepoint <1/2/3>\` - Dùng nước may mắn (có kháng thuốc)\n` +
+                `• \`.upgradebackpack\` / \`.ubp\` - Nâng cấp sức chứa Balo\n\n` +
                 `**🤖 Lệnh Custom:**\n${desc}`);
         return message.reply({ embeds: [helpEmbed] });
     }
