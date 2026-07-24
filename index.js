@@ -470,7 +470,7 @@ client.on('messageCreate', async message => {
                 `🧪 **2. Lucky Point [II]** - \`750,000 VNĐ\` (+6% win)\n   ↳ ${getStockText(shopData.stock2)}\n` +
                 `🧪 **3. Lucky Point [III]** - \`1,750,000 VNĐ\` (+12% win)\n   ↳ ${getStockText(shopData.stock3)}\n\n` +
                 '🔹 **Mua:** `.buy <1/2/3>` | 🔹 **Túi:** `.backpack` | 🔹 **Dùng:** `.usepoint <1/2/3>`')
-            .setFooter({ text: 'Thương nhân: Hàng hóa làm mới tự động vào đúng phút thứ 00 và 30 mỗi giờ ngoài đời thật!' });
+            .setFooter({ text: 'Thương nhân: Hàng hóa làm mới tự động mỗi 30 phút và nhiều hàng hơn trước !!' });
         return message.reply({ embeds: [shopEmbed] });
     }
 
