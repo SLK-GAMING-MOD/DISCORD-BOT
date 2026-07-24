@@ -121,28 +121,38 @@ async function getUserMoney(userId) {
     return user;
 }
 
+// ---------------------------------------------------------
+// ĐÃ FIX: CHUẨN HOÁ RESTOCK THEO THỜI GIAN THỰC (00 & 30) & HẾT HÀNG
+// ---------------------------------------------------------
 async function checkAndRestock() {
     let shop = await Shop.findOne({ shopId: "global" });
     const now = Date.now();
+    const thirtyMins = 30 * 60 * 1000;
+    
+    // Tính toán chu kỳ 30 phút gần nhất của thế giới (00 hoặc 30)
+    const currentPeriod = Math.floor(now / thirtyMins) * thirtyMins; 
     
     if (!shop) {
         shop = new Shop({
-            stock1: Math.floor(Math.random() * 4),
-            stock2: Math.floor(Math.random() * 4),
-            stock3: Math.floor(Math.random() * 4),
-            lastRestock: new Date(now)
+            shopId: "global",
+            stock1: Math.floor(Math.random() * 5) + 1, // Random từ 1 đến 5
+            stock2: Math.floor(Math.random() * 5) + 1,
+            stock3: Math.floor(Math.random() * 5) + 1,
+            lastRestock: new Date(currentPeriod)
         });
         await shop.save();
         return shop;
     }
 
-    if (now - shop.lastRestock.getTime() >= 30 * 60 * 1000) {
-        shop.stock1 = Math.floor(Math.random() * 4);
-        shop.stock2 = Math.floor(Math.random() * 4);
-        shop.stock3 = Math.floor(Math.random() * 4);
-        shop.lastRestock = new Date(now);
+    // Nếu thời gian hiện tại đã bước sang chu kỳ mới (lớn hơn hoặc bằng mốc restock cũ + 30 phút)
+    if (now >= shop.lastRestock.getTime() + thirtyMins) {
+        shop.stock1 = Math.floor(Math.random() * 5) + 1; // Nhập hàng mới từ 1 đến 5
+        shop.stock2 = Math.floor(Math.random() * 5) + 1;
+        shop.stock3 = Math.floor(Math.random() * 5) + 1;
+        shop.lastRestock = new Date(currentPeriod); // Cập nhật mốc thời gian chuẩn
         await shop.save();
     }
+    
     return shop;
 }
 
@@ -440,24 +450,27 @@ client.on('messageCreate', async message => {
         }
     }
 
+    // ---------------------------------------------------------
+    // ĐÃ FIX: HỆ THỐNG HIỂN THỊ THỜI GIAN NHẬP HÀNG LIVE BẰNG TÍNH NĂNG DISCORD
+    // ---------------------------------------------------------
     if (command === '.luckyshop') {
         const shopData = await checkAndRestock();
         const getStockText = (stock) => stock > 0 ? `*(Còn lại: **${stock}** bình)*` : `*(**Hết hàng!**)*`;
 
-        const nextRestock = new Date(shopData.lastRestock.getTime() + 30 * 60 * 1000);
-        const timeLeftMs = nextRestock.getTime() - Date.now();
-        const minsLeft = Math.floor(timeLeftMs / 60000);
-        const secsLeft = Math.floor((timeLeftMs % 60000) / 1000);
+        // Cộng 30 phút tính từ chu kỳ gần nhất
+        const nextRestock = shopData.lastRestock.getTime() + 30 * 60 * 1000;
+        // Chuyển sang chuẩn giây (Unix Epoch) để tích hợp vào Discord Time Format
+        const nextRestockUnix = Math.floor(nextRestock / 1000);
 
         const shopEmbed = new EmbedBuilder()
             .setColor('#9b59b6')
             .setTitle('🛒 Cửa Hàng May Mắn')
-            .setDescription(`Tăng tỷ lệ thắng khi gõ lệnh \`.earnmoney\`! Buff tác dụng trong **5 phút**.\n⏳ *Đợt nhập hàng tiếp theo sau: **${minsLeft} phút ${secsLeft} giây**.*\n\n` +
+            .setDescription(`Tăng tỷ lệ thắng khi gõ lệnh \`.earnmoney\`! Buff tác dụng trong **5 phút**.\n⏳ *Đợt nhập hàng tiếp theo lúc:* <t:${nextRestockUnix}:t> (<t:${nextRestockUnix}:R>)\n\n` +
                 `🧪 **1. Lucky Point [I]** - \`500,000 VNĐ\` (+3% win)\n   ↳ ${getStockText(shopData.stock1)}\n` +
                 `🧪 **2. Lucky Point [II]** - \`750,000 VNĐ\` (+6% win)\n   ↳ ${getStockText(shopData.stock2)}\n` +
                 `🧪 **3. Lucky Point [III]** - \`1,750,000 VNĐ\` (+12% win)\n   ↳ ${getStockText(shopData.stock3)}\n\n` +
                 '🔹 **Mua:** `.buy <1/2/3>` | 🔹 **Túi:** `.backpack` | 🔹 **Dùng:** `.usepoint <1/2/3>`')
-            .setFooter({ text: 'Thương nhân: Nhanh tay thì còn, chậm tay thì chờ 30 phút!' });
+            .setFooter({ text: 'Thương nhân: Hàng hóa làm mới tự động vào đúng phút thứ 00 và 30 mỗi giờ ngoài đời thật!' });
         return message.reply({ embeds: [shopEmbed] });
     }
 
@@ -504,7 +517,7 @@ client.on('messageCreate', async message => {
             return replyEmbed(message, '#e74c3c', `📦 Balo của bạn đã đạt giới hạn chứa loại này (**${userCurrentAmount}/${maxCapacity}** bình)!\nHãy gõ lệnh \`.ubp\` để nâng cấp sức chứa Balo.`);
         }
 
-        if (stockAmount <= 0) return replyEmbed(message, '#e67e22', `📦 Ôi không! **${itemName}** đã cháy hàng. Bạn phải đợi đợt restock.`);
+        if (stockAmount <= 0) return replyEmbed(message, '#e67e22', `📦 Ôi không! **${itemName}** đã cháy hàng. Bạn phải đợi đợt restock tiếp theo.`);
         if (userData.money < price) return replyEmbed(message, '#e74c3c', `❌ Thiếu tiền gòi bro! Cần **${formatVND(price)}** để rước ${itemName} về.`);
 
         userData.money -= price;
