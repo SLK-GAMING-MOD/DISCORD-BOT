@@ -132,7 +132,7 @@ function getItemInfo(itemId) {
         case '1': return { id: '1', name: "Lucky Point [I]", price: 500000, key: "luck1", stockKey: "stock1", isPoint: true };
         case '2': return { id: '2', name: "Lucky Point [II]", price: 750000, key: "luck2", stockKey: "stock2", isPoint: true };
         case '3': return { id: '3', name: "Lucky Point [III]", price: 1750000, key: "luck3", stockKey: "stock3", isPoint: true };
-        case '4': return { id: '4', name: "Mặt Nạ Bịt Mặt", price: 500000, key: "mask", stockKey: "stock4", isPoint: false };
+        case '4': return { id: '4', name: "Mặt Nạ Bịt Mặt", price: 100000, key: "mask", stockKey: "stock4", isPoint: false };
         case '5': return { id: '5', name: "Bí Kíp Steal", price: 5000000, key: "hasStealScroll", stockKey: "stock5", isPoint: false, isUnique: true };
         default: return null;
     }
@@ -502,8 +502,8 @@ client.on('messageCreate', async message => {
                 `🧪 **1. Lucky Point [I]** - \`500,000 VNĐ\` (+3% win earnmoney)\n   ↳ ${getStockText(shopData.stock1)}\n` +
                 `🧪 **2. Lucky Point [II]** - \`750,000 VNĐ\` (+6% win earnmoney)\n   ↳ ${getStockText(shopData.stock2)}\n` +
                 `🧪 **3. Lucky Point [III]** - \`1,750,000 VNĐ\` (+12% win earnmoney)\n   ↳ ${getStockText(shopData.stock3)}\n` +
-                `🎭 **4. Mặt Nạ Bịt Mặt** - \`500,000 VNĐ\` (+1.5% tỷ lệ Steal/1 lần dùng)\n   ↳ ${getStockText(shopData.stock4)}\n` +
-                `📜 **5. Bí Kíp Steal** - \`5,000,000 VNĐ\` (+2% tỷ lệ Steal VĨNH VIỄN - Mua 1 lần)\n   ↳ ${getStockText(shopData.stock5)}\n\n` +
+                `🎭 **4. Mặt Nạ Bịt Mặt** - \`100,000 VNĐ\` (+1.5% tỷ lệ Steal/1 lần steal)\n   ↳ ${getStockText(shopData.stock4)}\n` +
+                `📜 **5. Bí Kíp Steal** - \`5,000,000 VNĐ\` (+2% tỷ lệ Steal Vĩnh Viễn)\n   ↳ ${getStockText(shopData.stock5)}\n\n` +
                 '🔹 **Mua:** `.buy <1-5> [số lượng/all]` | 🔹 **Dùng Thuốc:** `.usepoint <1-3> [số lượng/all]`\n🔹 **Tặng:** `.givepoint @user <1-4> <số lượng>` | 🔹 **Balo:** `.backpack`')
             .setFooter({ text: 'Thương nhân: Hàng hóa được cập nhật thường xuyên!' });
         return message.reply({ embeds: [shopEmbed] });
